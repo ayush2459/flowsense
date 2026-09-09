@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Building2, Zap, Droplets, Bell, BarChart3, Sparkles, FileText, Cpu, Gauge, ShieldCheck, AlertTriangle, Leaf, Search, ChevronDown, Activity, CircleDollarSign, Lightbulb } from "lucide-react";
+import { Building2, Zap, Droplets, Bell, BarChart3, Sparkles, Search, ChevronDown, Activity, CircleDollarSign, ShieldCheck, AlertTriangle, Leaf, Lightbulb } from "lucide-react";
 import { AreaChart, Area, LineChart, Line, ResponsiveContainer, CartesianGrid, XAxis, YAxis, Tooltip } from "recharts";
 import { api } from "./services/api";
 import { connectAllFacilities } from "./realtime";
@@ -33,6 +33,7 @@ function PanelHead({ icon: Icon, title, sub, to }) { const nav = useNavigate(); 
 export default function RealtimeOverview({ facilities, anomalies, selected, setSelected, onRefresh }) {
   const nav = useNavigate();
   const [live, setLive] = useState({});
+  const liveRef = useRef({});
   const [liveAlerts, setLiveAlerts] = useState([]);
   const [connection, setConnection] = useState("connecting");
   const [historyEnergy, setHistoryEnergy] = useState([]);
@@ -44,8 +45,15 @@ export default function RealtimeOverview({ facilities, anomalies, selected, setS
     onMessage: (message) => {
       const code = message.facility_code;
       const data = message.data || {};
-      setLive(prev => ({ ...prev, [code]: { ...prev[code], ...data, timestamp: message.timestamp || data.reading_time || new Date().toISOString() } }));
-      setLastTick(message.timestamp || data.reading_time || new Date().toISOString());
+      const next = {
+        ...(liveRef.current[code] || {}),
+        ...data,
+        timestamp: message.timestamp || data.reading_time || new Date().toISOString()
+      };
+      liveRef.current = { ...liveRef.current, [code]: next };
+      setLive(liveRef.current);
+      setLastTick(next.timestamp);
+
       if (data.anomaly) {
         const alert = {
           id: `${code}-${message.timestamp || Date.now()}-${Math.random()}`,
@@ -54,33 +62,45 @@ export default function RealtimeOverview({ facilities, anomalies, selected, setS
           anomaly_type: data.anomaly_type || "Realtime anomaly",
           severity: String(data.status || "attention").toLowerCase() === "critical" ? "Critical" : "Warning",
           description: data.anomaly_type === "water_leak" ? "Possible water leakage detected by realtime IoT telemetry." : `Realtime IoT signal indicates ${String(data.anomaly_type || "abnormal behavior").replaceAll("_", " ")}.`,
-          detected_at: message.timestamp || data.reading_time || new Date().toISOString(),
+          detected_at: next.timestamp,
           deviation_percent: data.anomaly_type === "high_energy" ? 18 : data.anomaly_type === "high_water" ? 15 : 10,
           source_name: "Realtime IoT"
         };
         setLiveAlerts(prev => [alert, ...prev].slice(0, 25));
       }
-    },
-    onError: () => {}
+    }
   }), []);
 
   useEffect(() => {
-    if (!selected) return;
+    if (!selected) {
+      setHistoryEnergy([]);
+      setHistoryWater([]);
+      return;
+    }
     let alive = true;
     api.energy(selected, 24).then(rows => { if (alive) setHistoryEnergy(rows); }).catch(() => {});
     api.water(selected, 24).then(rows => { if (alive) setHistoryWater(rows); }).catch(() => {});
     return () => { alive = false; };
   }, [selected]);
 
+  // Create one clean portfolio point per realtime cycle. This avoids adding
+  // 100 intermediate points while the 100 facility messages arrive.
   useEffect(() => {
-    const current = selected ? live[selected] : null;
-    if (!current) return;
-    const stamp = current.timestamp || new Date().toISOString();
-    const e = Number(current.energy_kwh);
-    const w = Number(current.water_kl);
-    if (Number.isFinite(e)) setHistoryEnergy(prev => [...prev, { reading_time: stamp, reading_value: e }].slice(-30));
-    if (Number.isFinite(w)) setHistoryWater(prev => [...prev, { reading_time: stamp, reading_value: w }].slice(-30));
-  }, [selected, live]);
+    const timer = setInterval(() => {
+      const values = Object.values(liveRef.current);
+      if (!values.length) return;
+      const stamp = new Date().toISOString();
+      const energy = selected
+        ? Number(liveRef.current[selected]?.energy_kwh)
+        : values.reduce((sum, x) => sum + (Number(x.energy_kwh) || 0), 0);
+      const water = selected
+        ? Number(liveRef.current[selected]?.water_kl)
+        : values.reduce((sum, x) => sum + (Number(x.water_kl) || 0), 0);
+      if (Number.isFinite(energy)) setHistoryEnergy(prev => [...prev, { reading_time: stamp, reading_value: energy }].slice(-30));
+      if (Number.isFinite(water)) setHistoryWater(prev => [...prev, { reading_time: stamp, reading_value: water }].slice(-30));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [selected]);
 
   const selectedLive = selected ? live[selected] : null;
   const selectedFacility = facilities.find(f => f.facility_code === selected);
@@ -89,8 +109,11 @@ export default function RealtimeOverview({ facilities, anomalies, selected, setS
   const attention = facilities.filter(f => effective(f) === "Needs Attention").length;
   const critical = facilities.filter(f => effective(f) === "Critical").length;
 
-  const energyTotal = Number.isFinite(Number(selectedLive?.energy_kwh)) ? Number(selectedLive.energy_kwh) : Number(selectedFacility?.energy_kwh || 0);
-  const waterTotal = Number.isFinite(Number(selectedLive?.water_kl)) ? Number(selectedLive.water_kl) : Number(selectedFacility?.water_kl || 0);
+  const liveValues = Object.values(live);
+  const portfolioEnergy = liveValues.reduce((sum, x) => sum + (Number(x.energy_kwh) || 0), 0);
+  const portfolioWater = liveValues.reduce((sum, x) => sum + (Number(x.water_kl) || 0), 0);
+  const energyTotal = selectedLive?.energy_kwh != null ? Number(selectedLive.energy_kwh) : selected ? Number(selectedFacility?.energy_kwh || 0) : portfolioEnergy;
+  const waterTotal = selectedLive?.water_kl != null ? Number(selectedLive.water_kl) : selected ? Number(selectedFacility?.water_kl || 0) : portfolioWater;
   const energyExpected = energyTotal * 0.92;
   const energyWaste = energyTotal > 0 ? ((energyTotal - energyExpected) / energyTotal) * 100 : 0;
   const energyScore = selectedLive ? clamp(92 - (selectedLive.anomaly_type === "high_energy" ? 20 : 0) - (selectedLive.status === "critical" ? 8 : 0), 45, 95) : 81;
@@ -135,8 +158,8 @@ export default function RealtimeOverview({ facilities, anomalies, selected, setS
         <Kpi icon={ShieldCheck} label="Healthy" value={healthy} sub={`${facilities.length ? Math.round(healthy / facilities.length * 100) : 0}% of facilities`} tone="green"/>
         <Kpi icon={AlertTriangle} label="Needs Attention" value={attention} sub="Live review queue" tone="yellow"/>
         <Kpi icon={AlertTriangle} label="Critical" value={critical} sub="Immediate attention" tone="red"/>
-        <Kpi icon={Zap} label="Total Energy" value={`${num(energyTotal)} kWh`} sub="Live facility reading" tone="blue"/>
-        <Kpi icon={Droplets} label="Total Water" value={`${num(waterTotal, 2)} kL`} sub="Live facility reading" tone="cyan"/>
+        <Kpi icon={Zap} label="Total Energy" value={`${num(energyTotal)} kWh`} sub={selected ? "Live facility reading" : "Live portfolio reading"} tone="blue"/>
+        <Kpi icon={Droplets} label="Total Water" value={`${num(waterTotal, 2)} kL`} sub={selected ? "Live facility reading" : "Live portfolio reading"} tone="cyan"/>
         <Kpi icon={CircleDollarSign} label="Total Cost" value="Modelled" sub="Live tariff model" tone="purple"/>
         <Kpi icon={Leaf} label="Total Emissions" value={num(energyTotal * 0.82, 1)} sub="kg CO₂e model" tone="green"/>
       </div>
