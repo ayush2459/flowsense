@@ -38,6 +38,7 @@ export default function RealtimeOverview({ facilities, anomalies, selected, setS
   const [connection, setConnection] = useState("connecting");
   const [historyEnergy, setHistoryEnergy] = useState([]);
   const [historyWater, setHistoryWater] = useState([]);
+  const [historyRange, setHistoryRange] = useState(24);
   const [lastTick, setLastTick] = useState(null);
 
   useEffect(() => connectAllFacilities({
@@ -72,16 +73,18 @@ export default function RealtimeOverview({ facilities, anomalies, selected, setS
   }), []);
 
   useEffect(() => {
-    if (!selected) {
-      setHistoryEnergy([]);
-      setHistoryWater([]);
-      return;
-    }
     let alive = true;
-    api.energy(selected, 24).then(rows => { if (alive) setHistoryEnergy(rows); }).catch(() => {});
-    api.water(selected, 24).then(rows => { if (alive) setHistoryWater(rows); }).catch(() => {});
+    const energyRequest = selected ? api.energy(selected, historyRange) : api.portfolioEnergy(historyRange);
+    const waterRequest = selected ? api.water(selected, historyRange) : api.portfolioWater(historyRange);
+    Promise.all([energyRequest, waterRequest]).then(([energyRows, waterRows]) => {
+      if (!alive) return;
+      setHistoryEnergy(Array.isArray(energyRows) ? energyRows : []);
+      setHistoryWater(Array.isArray(waterRows) ? waterRows : []);
+    }).catch(() => {
+      if (alive) { setHistoryEnergy([]); setHistoryWater([]); }
+    });
     return () => { alive = false; };
-  }, [selected]);
+  }, [selected, historyRange]);
 
   // Create one clean portfolio point per realtime cycle. This avoids adding
   // 100 intermediate points while the 100 facility messages arrive.
@@ -116,10 +119,12 @@ export default function RealtimeOverview({ facilities, anomalies, selected, setS
   const waterTotal = selectedLive?.water_kl != null ? Number(selectedLive.water_kl) : selected ? Number(selectedFacility?.water_kl || 0) : portfolioWater;
   const energyExpected = energyTotal * 0.92;
   const energyWaste = energyTotal > 0 ? ((energyTotal - energyExpected) / energyTotal) * 100 : 0;
-  const energyScore = selectedLive ? clamp(92 - (selectedLive.anomaly_type === "high_energy" ? 20 : 0) - (selectedLive.status === "critical" ? 8 : 0), 45, 95) : 81;
+  const energyScoreFor = (x) => clamp(92 - (x?.anomaly_type === "high_energy" ? 20 : 0) - (x?.status === "critical" ? 8 : 0) - (x?.status === "attention" ? 5 : 0), 45, 95);
+  const waterScoreFor = (x) => clamp(91 - (x?.anomaly_type === "water_leak" ? 25 : 0) - (x?.status === "critical" ? 7 : 0) - (x?.status === "attention" ? 4 : 0), 40, 95);
+  const energyScore = selectedLive ? energyScoreFor(selectedLive) : liveValues.length ? liveValues.reduce((sum, x) => sum + energyScoreFor(x), 0) / liveValues.length : 81;
   const waterLoss = selectedLive?.leak_detected || selectedLive?.anomaly_type === "water_leak" ? waterTotal * 0.12 : waterTotal * 0.05;
   const waterUsed = Math.max(0, waterTotal - waterLoss);
-  const waterScore = selectedLive ? clamp(91 - (selectedLive.anomaly_type === "water_leak" ? 25 : 0) - (selectedLive.status === "critical" ? 7 : 0), 40, 95) : 76;
+  const waterScore = selectedLive ? waterScoreFor(selectedLive) : liveValues.length ? liveValues.reduce((sum, x) => sum + waterScoreFor(x), 0) / liveValues.length : 76;
   const treatment = clamp(selectedLive ? 90 + (Number(selectedLive.temperature_c) % 5) : 91.1, 70, 98);
   const reuse = clamp(selectedLive ? 64 + (Number(selectedLive.humidity_percent) % 8) : 67.3, 45, 85);
 
@@ -147,7 +152,7 @@ export default function RealtimeOverview({ facilities, anomalies, selected, setS
   return <div className="page">
     <header className="top">
       <div><div className="overline">FLOWSENSE / RESOURCE INTELLIGENCE</div><h1>Dashboard Overview</h1><p>Realtime energy and water monitoring across {facilities.length || 100} facilities</p></div>
-      <div className="top-actions"><div className="search"><Search/><input placeholder="Search facility, device or location..."/></div><select value={selected || ""} onChange={e => setSelected(e.target.value)}><option value="">All Facilities</option>{facilities.map(f => <option key={f.facility_code} value={f.facility_code}>{f.facility_name}</option>)}</select><button>Today ▾</button><button onClick={onRefresh}><Activity/></button><span className={liveClass}><i/>{connectionLabel}</span></div>
+      <div className="top-actions"><div className="search"><Search/><input placeholder="Search facility, device or location..."/></div><select value={selected || ""} onChange={e => setSelected(e.target.value)}><option value="">All Facilities</option>{facilities.map(f => <option key={f.facility_code} value={f.facility_code}>{f.facility_name}</option>)}</select><select value={historyRange} onChange={e => setHistoryRange(Number(e.target.value))}><option value={24}>Last 24 Hours</option><option value={168}>Last 7 Days</option><option value={720}>Last 30 Days</option></select><button onClick={onRefresh}><Activity/></button><span className={liveClass}><i/>{connectionLabel}</span></div>
     </header>
 
     <div className="content">
