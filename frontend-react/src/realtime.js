@@ -1,17 +1,26 @@
-const WS_BASE = "ws://127.0.0.1:8000";
+const WS_BASE = `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host.replace(/:\d+$/, ":8000")}`;
 
 export function connectAllFacilities({ onMessage, onStatus, onError } = {}) {
   let socket = null;
   let reconnectTimer = null;
   let stopped = false;
+  let reconnectDelay = 1000;
 
   const connect = () => {
     if (stopped) return;
 
     onStatus?.("connecting");
-    socket = new WebSocket(`${WS_BASE}/ws/live/all`);
+
+    try {
+      socket = new WebSocket(`${WS_BASE}/ws/live/all`);
+    } catch (error) {
+      onError?.(error);
+      scheduleReconnect();
+      return;
+    }
 
     socket.onopen = () => {
+      reconnectDelay = 1000;
       console.log("[Realtime] Connected to all facilities");
       onStatus?.("live");
     };
@@ -27,16 +36,26 @@ export function connectAllFacilities({ onMessage, onStatus, onError } = {}) {
       }
     };
 
-    socket.onerror = (error) => {
-      console.error("[Realtime] WebSocket error:", error);
-      onError?.(error);
+    socket.onerror = () => {
+      // Browser WebSocket errors contain little useful detail. The close
+      // handler below performs the reconnect and updates the UI state.
+      onStatus?.("reconnecting");
     };
 
     socket.onclose = () => {
       if (stopped) return;
       onStatus?.("reconnecting");
-      reconnectTimer = setTimeout(connect, 2000);
+      scheduleReconnect();
     };
+  };
+
+  const scheduleReconnect = () => {
+    if (stopped || reconnectTimer) return;
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      connect();
+    }, reconnectDelay);
+    reconnectDelay = Math.min(reconnectDelay * 2, 5000);
   };
 
   connect();
@@ -44,6 +63,8 @@ export function connectAllFacilities({ onMessage, onStatus, onError } = {}) {
   return () => {
     stopped = true;
     if (reconnectTimer) clearTimeout(reconnectTimer);
-    if (socket) socket.close();
+    reconnectTimer = null;
+    if (socket && socket.readyState === WebSocket.OPEN) socket.close(1000, "Dashboard closed");
+    socket = null;
   };
 }
