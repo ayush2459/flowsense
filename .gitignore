@@ -6,3 +6,7 @@ frontend-react/dist/
 __pycache__/
 *.pyc
 simulator/.env
+simulator/venv/
+backend/venv/
+**/__pycache__/
+*.pyc
