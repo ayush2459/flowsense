@@ -392,16 +392,18 @@ export default function RealtimeOverview({
     ? 0
     : portfolioWaterLoss;
 
-  const energyExpected = Math.max(
+  const energyExpected = selectedLive
+    ? Number(selectedLive.expected_energy_kwh) || energyTotal
+    : Math.max(0, energyTotal - energyLoss);
+
+  const energyExcess = Math.max(
     0,
-    energyTotal - energyLoss
+    energyTotal - energyExpected
   );
 
   const energyWaste =
     energyTotal > 0
-      ? (Math.max(0, energyTotal - energyExpected) /
-          energyTotal) *
-        100
+      ? (energyExcess / energyTotal) * 100
       : 0;
 
   const energyScore = selectedLive
@@ -416,9 +418,18 @@ export default function RealtimeOverview({
       0
     : Number(averageEfficiency?.water) || 0;
 
+  const waterExpected = selectedLive
+    ? Number(selectedLive.expected_water_kl) || waterTotal
+    : Math.max(0, waterTotal - waterLoss);
+
+  const waterLossLive = Math.max(
+    0,
+    waterTotal - waterExpected
+  );
+
   const waterUsed = Math.max(
     0,
-    waterTotal - waterLoss
+    waterTotal - waterLossLive
   );
 
   /*
@@ -816,7 +827,7 @@ export default function RealtimeOverview({
                     {num(
                       Math.max(
                         0,
-                        energyTotal - energyExpected
+                        energyExcess
                       )
                     )}{" "}
                     kWh
@@ -832,7 +843,7 @@ export default function RealtimeOverview({
 
                 <div>
                   <span>Estimated Savings</span>
-                  <b className="green">₹{num(Math.max(0, energyTotal - energyExpected) * ENERGY_TARIFF, 0)}</b>
+                  <b className="green">₹{num(energyExcess * ENERGY_TARIFF, 0)}</b>
                 </div>
               </div>
             </div>
@@ -909,7 +920,7 @@ export default function RealtimeOverview({
                 <div>
                   <span>Water Loss</span>
                   <b className="red">
-                    {num(waterLoss, 2)} kL
+                    {num(waterLossLive, 2)} kL
                   </b>
                 </div>
 
@@ -1168,7 +1179,7 @@ export default function RealtimeOverview({
                   {num(
                     Math.max(
                       0,
-                      energyTotal - energyExpected
+                      energyExcess
                     )
                   )}{" "}
                   kWh
@@ -1183,7 +1194,7 @@ export default function RealtimeOverview({
                 <span>Water Opportunity</span>
 
                 <b className="cyan">
-                  {num(waterLoss, 2)} kL
+                  {num(waterLossLive, 2)} kL
                 </b>
 
                 <small>

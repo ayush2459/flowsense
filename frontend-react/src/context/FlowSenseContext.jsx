@@ -48,13 +48,18 @@ function normalizeMessage(message) {
       new Date().toISOString(),
 
     energy_kwh: Number(data.energy_kwh ?? 0),
+    expected_energy_kwh: Number(data.expected_energy_kwh ?? 320),
     water_kl: Number(data.water_kl ?? 0),
+    expected_water_kl: Number(data.expected_water_kl ?? 30),
     power_kw: Number(data.power_kw ?? 0),
     voltage_v: Number(data.voltage_v ?? 0),
     current_a: Number(data.current_a ?? 0),
 
     water_flow_lpm: Number(data.water_flow_lpm ?? 0),
     water_pressure_bar: Number(data.water_pressure_bar ?? 0),
+
+    treatment_rate: Number(data.treatment_rate ?? data.treatment_percent ?? 91.1),
+    reuse_rate: Number(data.reuse_rate ?? data.reuse_percent ?? 67.3),
 
     temperature_c: Number(data.temperature_c ?? 0),
     humidity_percent: Number(data.humidity_percent ?? 0),
@@ -305,7 +310,16 @@ export function FlowSenseProvider({ children }) {
 
         if (!code) return;
 
-        facilitiesRef.current[code] = facility;
+        const previous = facilitiesRef.current[code] || {};
+
+        facilitiesRef.current[code] = {
+          ...previous,
+          ...facility,
+          expected_energy_kwh: Number(facility.expected_energy_kwh) > 0 ? facility.expected_energy_kwh : previous.expected_energy_kwh || 320,
+          expected_water_kl: Number(facility.expected_water_kl) > 0 ? facility.expected_water_kl : previous.expected_water_kl || 30,
+          treatment_rate: Number(facility.treatment_rate) > 0 ? facility.treatment_rate : previous.treatment_rate || 91.1,
+          reuse_rate: Number(facility.reuse_rate) > 0 ? facility.reuse_rate : previous.reuse_rate || 67.3
+        };
 
         const previousHistory =
           historyRef.current[code] || [];

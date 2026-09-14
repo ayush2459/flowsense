@@ -1,4 +1,4 @@
-import argparse
+﻿import argparse
 import os
 import random
 import time
@@ -194,6 +194,19 @@ def generate_telemetry(
 
             status = "attention"
 
+    treatment_rate = random.uniform(88.0, 96.0)
+    reuse_rate = random.uniform(60.0, 75.0)
+
+    if anomaly_type == "high_water":
+        treatment_rate -= random.uniform(3.0, 7.0)
+        reuse_rate -= random.uniform(4.0, 8.0)
+    elif anomaly_type == "water_leak":
+        treatment_rate -= random.uniform(4.0, 8.0)
+        reuse_rate -= random.uniform(5.0, 10.0)
+
+    treatment_rate = max(0.0, min(100.0, treatment_rate))
+    reuse_rate = max(0.0, min(100.0, reuse_rate))
+
     return {
 
         "reading_time": time.time(),
@@ -207,6 +220,14 @@ def generate_telemetry(
             water,
             3
         ),
+
+        "expected_energy_kwh": 320.0,
+
+        "expected_water_kl": 30.0,
+
+        "treatment_rate": round(treatment_rate, 1),
+
+        "reuse_rate": round(reuse_rate, 1),
 
         "water_flow_lpm": round(
             water_flow,
@@ -498,3 +519,6 @@ def main():
 if __name__ == "__main__":
 
     main()
+
+
+

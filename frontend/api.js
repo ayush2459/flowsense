@@ -1,3 +1,49 @@
+// ============================================================
+// FlowSense Shared Live Data Helpers
+// ============================================================
+
+function getLiveFacilities() {
+
+  if (
+    window.FlowSenseRealtime
+  ) {
+
+    return window.FlowSenseRealtime
+      .getFacilities();
+
+  }
+
+  return [];
+
+}
+
+
+function getLiveFacility(
+  facilityCode
+) {
+
+  if (
+    window.FlowSenseRealtime
+  ) {
+
+    return window.FlowSenseRealtime
+      .getFacility(facilityCode);
+
+  }
+
+  return null;
+
+}
+
+
+function isLiveConnected() {
+
+  return !!(
+    window.FlowSenseRealtime &&
+    window.FlowSenseRealtime.isConnected()
+  );
+
+}
 const API_BASE = "http://localhost:8000";
 
 async function apiGet(path) {
