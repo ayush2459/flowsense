@@ -178,9 +178,12 @@ export default function RealtimeOverview({
     return map;
   }, [realtimeFacilities]);
 
-  const liveValues = facilityList.length
-    ? facilityList
-    : Object.values(live);
+  // Always aggregate portfolio telemetry from the realtime WebSocket store.
+  // facilityList may contain metadata and must not be used as the telemetry source.
+  const liveValues = Object.values(live);
+
+  // "all" means the complete portfolio; a facility code means one facility.
+  const isPortfolio = selected === "all" || !selected;
 
   const [historyEnergy, setHistoryEnergy] = useState([]);
   const [historyWater, setHistoryWater] = useState([]);
@@ -196,13 +199,13 @@ export default function RealtimeOverview({
   useEffect(() => {
     let alive = true;
 
-    const energyRequest = selected
-      ? api.energy(selected, historyRange)
-      : api.portfolioEnergy(historyRange);
+    const energyRequest = isPortfolio
+      ? api.portfolioEnergy(historyRange)
+      : api.energy(selected, historyRange);
 
-    const waterRequest = selected
-      ? api.water(selected, historyRange)
-      : api.portfolioWater(historyRange);
+    const waterRequest = isPortfolio
+      ? api.portfolioWater(historyRange)
+      : api.water(selected, historyRange);
 
     Promise.all([energyRequest, waterRequest])
       .then(([energyRows, waterRows]) => {
@@ -226,7 +229,7 @@ export default function RealtimeOverview({
     return () => {
       alive = false;
     };
-  }, [selected, historyRange]);
+  }, [selected, historyRange, isPortfolio]);
 
   /*
    * Append an actual realtime telemetry point whenever the provider
@@ -238,23 +241,21 @@ export default function RealtimeOverview({
   useEffect(() => {
     if (!liveValues.length) return;
 
-    const source = selected
-      ? live[selected]
-      : null;
+    const source = isPortfolio ? null : live[selected];
 
-    const energy = selected
-      ? Number(source?.energy_kwh)
-      : liveValues.reduce(
+    const energy = isPortfolio
+      ? liveValues.reduce(
           (sum, x) => sum + (Number(x.energy_kwh) || 0),
           0
-        );
+        )
+      : Number(source?.energy_kwh);
 
-    const water = selected
-      ? Number(source?.water_kl)
-      : liveValues.reduce(
+    const water = isPortfolio
+      ? liveValues.reduce(
           (sum, x) => sum + (Number(x.water_kl) || 0),
           0
-        );
+        )
+      : Number(source?.water_kl);
 
     const stamp =
       source?.timestamp ||
@@ -302,13 +303,15 @@ export default function RealtimeOverview({
         ].slice(-60);
       });
     }
-  }, [live, selected, liveValues, lastTick]);
+  }, [live, selected, liveValues, lastTick, isPortfolio]);
 
-  const selectedLive = selected ? live[selected] : null;
+  const selectedLive = isPortfolio ? null : live[selected];
 
-  const selectedFacility = facilities.find(
-    (f) => f.facility_code === selected
-  );
+  const selectedFacility = isPortfolio
+    ? null
+    : facilities.find(
+        (f) => f.facility_code === selected
+      );
 
   const effective = (f) =>
     liveStatus(live[f.facility_code]?.facility_status) ||
@@ -366,34 +369,43 @@ export default function RealtimeOverview({
 
   const energyTotal = selectedLive
     ? Number(selectedLive.energy_kwh) || 0
-    : selected
-    ? Number(selectedFacility?.energy_kwh || 0)
-    : portfolioEnergy;
+    : isPortfolio
+    ? portfolioEnergy
+    : Number(selectedFacility?.energy_kwh || 0);
 
   const waterTotal = selectedLive
     ? Number(selectedLive.water_kl) || 0
-    : selected
-    ? Number(selectedFacility?.water_kl || 0)
-    : portfolioWater;
+    : isPortfolio
+    ? portfolioWater
+    : Number(selectedFacility?.water_kl || 0);
 
   const powerTotal = selectedLive
     ? Number(selectedLive.power_kw) || 0
-    : portfolioPower;
+    : isPortfolio
+    ? portfolioPower
+    : Number(selectedFacility?.power_kw || 0);
 
   const energyLoss = selectedLive
     ? Number(selectedLive.estimated_energy_loss_kwh) || 0
-    : selected
-    ? 0
-    : portfolioEnergyLoss;
+    : isPortfolio
+    ? portfolioEnergyLoss
+    : Number(selectedFacility?.estimated_energy_loss_kwh || 0);
 
   const waterLoss = selectedLive
     ? Number(selectedLive.estimated_water_loss_kl) || 0
-    : selected
-    ? 0
-    : portfolioWaterLoss;
+    : isPortfolio
+    ? portfolioWaterLoss
+    : Number(selectedFacility?.estimated_water_loss_kl || 0);
+
+  const portfolioExpectedEnergy = liveValues.reduce(
+    (sum, x) => sum + (Number(x.expected_energy_kwh) || 0),
+    0
+  );
 
   const energyExpected = selectedLive
     ? Number(selectedLive.expected_energy_kwh) || energyTotal
+    : isPortfolio && portfolioExpectedEnergy > 0
+    ? portfolioExpectedEnergy
     : Math.max(0, energyTotal - energyLoss);
 
   const energyExcess = Math.max(
@@ -418,8 +430,15 @@ export default function RealtimeOverview({
       0
     : Number(averageEfficiency?.water) || 0;
 
+  const portfolioExpectedWater = liveValues.reduce(
+    (sum, x) => sum + (Number(x.expected_water_kl) || 0),
+    0
+  );
+
   const waterExpected = selectedLive
     ? Number(selectedLive.expected_water_kl) || waterTotal
+    : isPortfolio && portfolioExpectedWater > 0
+    ? portfolioExpectedWater
     : Math.max(0, waterTotal - waterLoss);
 
   const waterLossLive = Math.max(
@@ -454,15 +473,15 @@ export default function RealtimeOverview({
     100
   );
 
-  const energyCost = selected
-    ? energyTotal * ENERGY_TARIFF
-    : Number(totals?.energyCost) ||
-      energyTotal * ENERGY_TARIFF;
+  const energyCost = isPortfolio
+    ? Number(totals?.energyCost) ||
+      energyTotal * ENERGY_TARIFF
+    : energyTotal * ENERGY_TARIFF;
 
-  const waterCost = selected
-    ? waterTotal * WATER_TARIFF
-    : Number(totals?.waterCost) ||
-      waterTotal * WATER_TARIFF;
+  const waterCost = isPortfolio
+    ? Number(totals?.waterCost) ||
+      waterTotal * WATER_TARIFF
+    : waterTotal * WATER_TARIFF;
 
   const totalCost = energyCost + waterCost;
 
@@ -519,11 +538,11 @@ export default function RealtimeOverview({
       .slice(0, 25);
   }, [realtimeAlerts, anomalies]);
 
-  const currentFacilityAlerts = selected
-    ? alerts.filter(
+  const currentFacilityAlerts = isPortfolio
+    ? alerts.length
+    : alerts.filter(
         (a) => a.facility_code === selected
-      ).length
-    : alerts.length;
+      ).length;
 
   const recommendations = useMemo(() => {
     const items = [];
@@ -656,12 +675,12 @@ export default function RealtimeOverview({
           </div>
 
           <select
-            value={selected || ""}
+            value={selected || "all"}
             onChange={(e) =>
               setSelected(e.target.value)
             }
           >
-            <option value="">All Facilities</option>
+            <option value="all">All Facilities</option>
 
             {facilities.map((f) => (
               <option
@@ -759,9 +778,9 @@ export default function RealtimeOverview({
             label="Total Energy"
             value={`${num(energyTotal)} kWh`}
             sub={
-              selected
-                ? "Live facility reading"
-                : "Live portfolio reading"
+              isPortfolio
+                ? "Live portfolio reading"
+                : "Live facility reading"
             }
             tone="blue"
           />
@@ -771,9 +790,9 @@ export default function RealtimeOverview({
             label="Total Water"
             value={`${num(waterTotal, 2)} kL`}
             sub={
-              selected
-                ? "Live facility reading"
-                : "Live portfolio reading"
+              isPortfolio
+                ? "Live portfolio reading"
+                : "Live facility reading"
             }
             tone="cyan"
           />
@@ -920,7 +939,7 @@ export default function RealtimeOverview({
                 <div>
                   <span>Water Loss</span>
                   <b className="red">
-                    {num(waterLossLive, 2)} kL
+                    {num(waterLoss, 2)} kL
                   </b>
                 </div>
 
@@ -1194,7 +1213,7 @@ export default function RealtimeOverview({
                 <span>Water Opportunity</span>
 
                 <b className="cyan">
-                  {num(waterLossLive, 2)} kL
+                  {num(waterLoss, 2)} kL
                 </b>
 
                 <small>
