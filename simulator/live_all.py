@@ -28,7 +28,6 @@ API_URL = os.getenv(
 # ============================================================
 
 def get_conn():
-
     if not DATABASE_URL:
         raise RuntimeError(
             "DATABASE_URL is missing from .env"
@@ -41,13 +40,10 @@ def get_conn():
 
 
 def get_facilities():
-
     conn = get_conn()
 
     try:
-
         with conn.cursor() as cur:
-
             cur.execute("""
                 SELECT
                     facility_code
@@ -61,7 +57,6 @@ def get_facilities():
             ]
 
     finally:
-
         conn.close()
 
 
@@ -73,7 +68,6 @@ def generate_telemetry(
     facility_code,
     anomaly_rate
 ):
-
     anomaly = random.random() < anomaly_rate
 
     # --------------------------------------------------------
@@ -83,6 +77,11 @@ def generate_telemetry(
     energy = random.uniform(
         280,
         360
+    )
+
+    power_kw = random.uniform(
+        180,
+        420
     )
 
     water = random.uniform(
@@ -140,6 +139,11 @@ def generate_telemetry(
                 3.0
             )
 
+            power_kw *= random.uniform(
+                1.8,
+                2.5
+            )
+
             status = "critical"
 
         elif anomaly_type == "high_water":
@@ -191,21 +195,83 @@ def generate_telemetry(
 
         # Small chance of attention state
         if random.random() < 0.08:
-
             status = "attention"
 
-    treatment_rate = random.uniform(88.0, 96.0)
-    reuse_rate = random.uniform(60.0, 75.0)
+    # --------------------------------------------------------
+    # Expected values and derived losses
+    # --------------------------------------------------------
+
+    expected_energy = 320.0
+    expected_water = 30.0
+
+    estimated_energy_loss = max(
+        0.0,
+        energy - expected_energy
+    )
+
+    estimated_water_loss = max(
+        0.0,
+        water - expected_water
+    )
+
+    # A leak can create additional unaccounted water usage
+    if anomaly_type == "water_leak":
+        estimated_water_loss = max(
+            estimated_water_loss,
+            water_flow * 0.08
+        )
+
+    # --------------------------------------------------------
+    # Water treatment / reuse
+    # --------------------------------------------------------
+
+    treatment_rate = random.uniform(
+        88.0,
+        96.0
+    )
+
+    reuse_rate = random.uniform(
+        60.0,
+        75.0
+    )
 
     if anomaly_type == "high_water":
-        treatment_rate -= random.uniform(3.0, 7.0)
-        reuse_rate -= random.uniform(4.0, 8.0)
-    elif anomaly_type == "water_leak":
-        treatment_rate -= random.uniform(4.0, 8.0)
-        reuse_rate -= random.uniform(5.0, 10.0)
 
-    treatment_rate = max(0.0, min(100.0, treatment_rate))
-    reuse_rate = max(0.0, min(100.0, reuse_rate))
+        treatment_rate -= random.uniform(
+            3.0,
+            7.0
+        )
+
+        reuse_rate -= random.uniform(
+            4.0,
+            8.0
+        )
+
+    elif anomaly_type == "water_leak":
+
+        treatment_rate -= random.uniform(
+            4.0,
+            8.0
+        )
+
+        reuse_rate -= random.uniform(
+            5.0,
+            10.0
+        )
+
+    treatment_rate = max(
+        0.0,
+        min(100.0, treatment_rate)
+    )
+
+    reuse_rate = max(
+        0.0,
+        min(100.0, reuse_rate)
+    )
+
+    # --------------------------------------------------------
+    # TELEMETRY PAYLOAD
+    # --------------------------------------------------------
 
     return {
 
@@ -216,18 +282,39 @@ def generate_telemetry(
             3
         ),
 
+        "expected_energy_kwh": expected_energy,
+
+        "estimated_energy_loss_kwh": round(
+            estimated_energy_loss,
+            3
+        ),
+
+        "power_kw": round(
+            power_kw,
+            3
+        ),
+
         "water_kl": round(
             water,
             3
         ),
 
-        "expected_energy_kwh": 320.0,
+        "expected_water_kl": expected_water,
 
-        "expected_water_kl": 30.0,
+        "estimated_water_loss_kl": round(
+            estimated_water_loss,
+            3
+        ),
 
-        "treatment_rate": round(treatment_rate, 1),
+        "treatment_rate": round(
+            treatment_rate,
+            1
+        ),
 
-        "reuse_rate": round(reuse_rate, 1),
+        "reuse_rate": round(
+            reuse_rate,
+            1
+        ),
 
         "water_flow_lpm": round(
             water_flow,
@@ -272,7 +359,6 @@ def broadcast(
     facility_code,
     payload
 ):
-
     url = (
         f"{API_URL}/api/live/broadcast/"
         f"{facility_code}"
@@ -314,7 +400,6 @@ def run_round(
     anomaly_rate,
     workers
 ):
-
     start = time.perf_counter()
 
     healthy = 0
@@ -484,6 +569,23 @@ def main():
 
             round_number += 1
 
+            # Show one sample so we can verify
+            # the new realtime fields directly.
+            sample = (
+                results[0][3]
+                if results
+                else None
+            )
+
+            if sample:
+                print(
+                    f"  Sample | "
+                    f"Energy={sample['energy_kwh']} kWh | "
+                    f"Water={sample['water_kl']} kL | "
+                    f"WaterLoss={sample['estimated_water_loss_kl']} kL | "
+                    f"Power={sample['power_kw']} kW"
+                )
+
             print(
                 f"[{time.strftime('%H:%M:%S')}] "
                 f"Round {round_number} | "
@@ -495,7 +597,6 @@ def main():
                 f"Time={elapsed:.3f}s"
             )
 
-            # Keep exactly the requested interval
             sleep_time = max(
                 0,
                 args.interval - elapsed
@@ -517,8 +618,4 @@ def main():
 
 
 if __name__ == "__main__":
-
     main()
-
-
-

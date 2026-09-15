@@ -2167,13 +2167,19 @@ function App() {
     lastTick,
   } = useFlowSense();
 
-  const [selected, setSelected] = useState("");
+ const [selected, setSelected] = useState("all");
 
-  useEffect(() => {
-    if (!selected && facilityList.length) {
-      setSelected(facilityList[0].facility_code);
-    }
-  }, [facilityList, selected]);
+ useEffect(() => {
+  if (
+    selected !== "all" &&
+    !facilityList.some(
+      (facility) =>
+        facility.facility_code === selected
+    )
+  ) {
+    setSelected("all");
+  }
+}, [facilityList, selected]);
 
   const refresh = () => {
     window.location.reload();
