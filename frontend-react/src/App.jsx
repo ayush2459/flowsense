@@ -968,48 +968,213 @@ function Resource({
   type,
   facilities
 }) {
-  const [selected, setSelected] =
-    useState(
-      facilities[0]?.facility_code || ""
-    );
+  const {
+    facilityList,
+    getHistory,
+    totals,
+    connection,
+    lastTick
+  } = useFlowSense();
 
-  const [data, setData] =
-    useState([]);
+  const [selected, setSelected] = useState("all");
+  const [history, setHistory] = useState([]);
 
-  const [loading, setLoading] =
-    useState(false);
-
-  const isEnergy =
-    type === "energy";
+  const isEnergy = type === "energy";
 
   useEffect(() => {
-    if (!selected) return;
+    const buildHistory = () => {
+      if (selected === "all") {
+        const points = {};
 
-    let alive = true;
+        facilityList.forEach((facility) => {
+          const rows = getHistory(facility.facility_code);
 
-    setLoading(true);
+          rows.forEach((row) => {
+            const date = new Date(row.timestamp);
 
-    api[type](selected, 24)
-      .then((rows) => {
-        if (alive) {
-          setData(
-            Array.isArray(rows)
-              ? rows
-              : []
-          );
-        }
-      })
-      .catch(() => {
-        if (alive) setData([]);
-      })
-      .finally(() => {
-        if (alive) setLoading(false);
-      });
+            if (Number.isNaN(date.getTime())) {
+              return;
+            }
 
-    return () => {
-      alive = false;
+            // Group readings from the same simulator round
+            // into one portfolio point.
+            const bucket =
+              Math.floor(date.getTime() / 1000) * 1000;
+
+            const key = new Date(bucket).toISOString();
+
+            if (!points[key]) {
+              points[key] = {
+                timestamp: key,
+                energy_kwh: 0,
+                water_kl: 0,
+                power_kw: 0,
+                water_flow_lpm: 0
+              };
+            }
+
+            points[key].energy_kwh +=
+              Number(row.energy_kwh) || 0;
+
+            points[key].water_kl +=
+              Number(row.water_kl) || 0;
+
+            points[key].power_kw +=
+              Number(row.power_kw) || 0;
+
+            points[key].water_flow_lpm +=
+              Number(row.water_flow_lpm) || 0;
+          });
+        });
+
+        setHistory(
+          Object.values(points)
+            .sort(
+              (a, b) =>
+                new Date(a.timestamp) -
+                new Date(b.timestamp)
+            )
+            .slice(-60)
+        );
+
+        return;
+      }
+
+      const rows = getHistory(selected) || [];
+
+      setHistory(
+        [...rows]
+          .slice(-60)
+          .sort(
+            (a, b) =>
+              new Date(a.timestamp) -
+              new Date(b.timestamp)
+          )
+      );
     };
-  }, [selected, type]);
+
+    buildHistory();
+  }, [selected, facilityList, lastTick]);
+
+  const rows = facilityList
+    .map((facility) => ({
+      ...facility,
+
+      energy:
+        Number(facility.energy_kwh) || 0,
+
+      water:
+        Number(facility.water_kl) || 0,
+
+      power:
+        Number(facility.power_kw) || 0,
+
+      flow:
+        Number(facility.water_flow_lpm) || 0,
+
+      pressure:
+        Number(facility.water_pressure_bar) || 0
+    }))
+    .sort((a, b) =>
+      (a.facility_name || "").localeCompare(
+        b.facility_name || ""
+      )
+    );
+
+  const selectedFacility =
+    selected === "all"
+      ? null
+      : rows.find(
+          (facility) =>
+            facility.facility_code === selected
+        );
+
+  const chartData = history.map((row) => ({
+    time: fmtTime(row.timestamp),
+
+    energy:
+      Number(row.energy_kwh) || 0,
+
+    water:
+      Number(row.water_kl) || 0,
+
+    power:
+      Number(row.power_kw) || 0,
+
+    flow:
+      Number(row.water_flow_lpm) || 0
+  }));
+
+  const displayedEnergy = selectedFacility
+    ? selectedFacility.energy
+    : totals.energy;
+
+  const displayedWater = selectedFacility
+    ? selectedFacility.water
+    : totals.water;
+
+  const displayedPower = selectedFacility
+    ? selectedFacility.power
+    : totals.power;
+
+  const displayedFlow = selectedFacility
+    ? selectedFacility.flow
+    : rows.reduce(
+        (sum, facility) =>
+          sum + facility.flow,
+        0
+      );
+
+  const displayedPressure = selectedFacility
+    ? selectedFacility.pressure
+    : rows.length
+      ? rows.reduce(
+          (sum, facility) =>
+            sum + facility.pressure,
+          0
+        ) / rows.length
+      : 0;
+
+  const expectedEnergy = selectedFacility
+    ? Number(
+        selectedFacility.expected_energy_kwh
+      ) || 320
+    : rows.reduce(
+        (sum, facility) =>
+          sum +
+          (Number(
+            facility.expected_energy_kwh
+          ) || 320),
+        0
+      );
+
+  const expectedWater = selectedFacility
+    ? Number(
+        selectedFacility.expected_water_kl
+      ) || 30
+    : rows.reduce(
+        (sum, facility) =>
+          sum +
+          (Number(
+            facility.expected_water_kl
+          ) || 30),
+        0
+      );
+
+  const energyExcess = Math.max(
+    0,
+    displayedEnergy - expectedEnergy
+  );
+
+  const waterLoss = selectedFacility
+    ? Number(
+        selectedFacility.estimated_water_loss_kl
+      ) || 0
+    : totals.waterLoss;
+
+  const latestRows = selectedFacility
+    ? [selectedFacility]
+    : rows;
 
   return (
     <Page
@@ -1020,28 +1185,145 @@ function Resource({
       }
       sub={
         isEnergy
-          ? "Consumption and demand trends"
-          : "Flow, input and loss indicators"
+          ? "Realtime energy consumption, demand and facility performance"
+          : "Realtime water consumption, flow, pressure and facility performance"
       }
     >
-      <div className="selectbox">
-        <Building2 />
+      <div className="page-toolbar">
+        <div className="selectbox">
+          <Building2 />
 
-        <select
-          value={selected}
-          onChange={(e) =>
-            setSelected(e.target.value)
-          }
-        >
-          {facilities.map((f) => (
-            <option
-              key={f.facility_code}
-              value={f.facility_code}
-            >
-              {f.facility_name}
+          <select
+            value={selected}
+            onChange={(event) =>
+              setSelected(event.target.value)
+            }
+          >
+            <option value="all">
+              All Facilities
             </option>
-          ))}
-        </select>
+
+            {rows.map((facility) => (
+              <option
+                key={facility.facility_code}
+                value={facility.facility_code}
+              >
+                {facility.facility_name} ·{" "}
+                {facility.facility_code}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <span
+          className={`status ${
+            connection === "live"
+              ? "healthy"
+              : "attention"
+          }`}
+        >
+          {connection === "live"
+            ? "● Live"
+            : "● Reconnecting"}
+        </span>
+      </div>
+
+      <div className="kpis">
+        <Kpi
+          icon={isEnergy ? Zap : Droplets}
+          label={
+            isEnergy
+              ? "Live Energy"
+              : "Live Water"
+          }
+          value={
+            isEnergy
+              ? `${num(displayedEnergy)} kWh`
+              : `${num(displayedWater, 2)} kL`
+          }
+          sub={
+            selectedFacility
+              ? selectedFacility.facility_name
+              : "All connected facilities"
+          }
+          tone={
+            isEnergy
+              ? "blue"
+              : "cyan"
+          }
+        />
+
+        <Kpi
+          icon={
+            isEnergy
+              ? Activity
+              : Waves
+          }
+          label={
+            isEnergy
+              ? "Power Demand"
+              : "Water Flow"
+          }
+          value={
+            isEnergy
+              ? `${num(displayedPower)} kW`
+              : `${num(displayedFlow)} L/min`
+          }
+          sub="Realtime IoT reading"
+          tone="green"
+        />
+
+        <Kpi
+          icon={
+            isEnergy
+              ? AlertTriangle
+              : Activity
+          }
+          label={
+            isEnergy
+              ? "Excess Consumption"
+              : "Water Loss"
+          }
+          value={
+            isEnergy
+              ? `${num(energyExcess)} kWh`
+              : `${num(waterLoss, 2)} kL`
+          }
+          sub={
+            isEnergy
+              ? "Above expected baseline"
+              : "Estimated unaccounted usage"
+          }
+          tone={
+            (
+              isEnergy
+                ? energyExcess
+                : waterLoss
+            ) > 0
+              ? "red"
+              : "green"
+          }
+        />
+
+        <Kpi
+          icon={
+            isEnergy
+              ? Gauge
+              : Waves
+          }
+          label={
+            isEnergy
+              ? "Expected"
+              : "Pressure"
+          }
+          value={
+            isEnergy
+              ? `${num(expectedEnergy)} kWh`
+              : `${num(displayedPressure, 2)} bar`
+          }
+          sub="Current operating baseline"
+          tone="yellow"
+        />
       </div>
 
       <Card className="large-chart">
@@ -1049,58 +1331,267 @@ function Resource({
           <div>
             <h2>
               {isEnergy
-                ? "Energy Consumption"
-                : "Water Flow"}{" "}
-              Trend
+                ? "Realtime Energy Consumption"
+                : "Realtime Water Flow"}
             </h2>
 
             <p>
-              Last 24 hours · live FastAPI
-              data
+              {selectedFacility
+                ? selectedFacility.facility_name
+                : "All facilities"}{" "}
+              · live WebSocket history
             </p>
           </div>
 
-          {loading && (
-            <span className="loading">
-              Loading...
-            </span>
-          )}
+          <span className="updated">
+            {lastTick
+              ? `Updated ${fmtTime(lastTick)}`
+              : "Waiting for telemetry..."}
+          </span>
         </div>
 
-        <ResponsiveContainer>
-          <LineChart data={data}>
-            <CartesianGrid
-              stroke="#1c2d43"
-              vertical={false}
-            />
+        <div className="chart">
+          <ResponsiveContainer>
+            <LineChart data={chartData}>
+              <CartesianGrid
+                stroke="#1c2d43"
+                vertical={false}
+              />
 
-            <XAxis
-              dataKey="reading_time"
-              tickFormatter={fmtTime}
-              stroke="#61748e"
-            />
+              <XAxis
+                dataKey="time"
+                stroke="#61748e"
+              />
 
-            <YAxis stroke="#61748e" />
+              <YAxis
+                stroke="#61748e"
+              />
 
-            <Tooltip />
+              <Tooltip />
 
-            <Line
-              dataKey="reading_value"
-              stroke={
-                isEnergy
-                  ? "#31aaff"
-                  : "#2cc9ed"
-              }
-              dot={false}
-              strokeWidth={2}
-            />
-          </LineChart>
-        </ResponsiveContainer>
+              <Line
+                type="monotone"
+                dataKey={
+                  isEnergy
+                    ? "energy"
+                    : "flow"
+                }
+                stroke={
+                  isEnergy
+                    ? "#31aaff"
+                    : "#2cc9ed"
+                }
+                dot={false}
+                strokeWidth={2}
+              />
+
+              {isEnergy && (
+                <Line
+                  type="monotone"
+                  dataKey="power"
+                  stroke="#f2c84b"
+                  dot={false}
+                  strokeWidth={1.5}
+                />
+              )}
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </Card>
+
+      <Card className="table-card">
+        <div className="panel-head">
+          <div>
+            <h2>
+              {isEnergy
+                ? "Live Energy Readings"
+                : "Live Water Readings"}
+            </h2>
+
+            <p>
+              Latest realtime readings from{" "}
+              {latestRows.length} facilities
+            </p>
+          </div>
+        </div>
+
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Facility</th>
+                <th>Status</th>
+
+                {isEnergy ? (
+                  <>
+                    <th>Energy</th>
+                    <th>Expected</th>
+                    <th>Power</th>
+                    <th>Excess</th>
+                  </>
+                ) : (
+                  <>
+                    <th>Water</th>
+                    <th>Flow</th>
+                    <th>Pressure</th>
+                    <th>Loss</th>
+                  </>
+                )}
+
+                <th>Updated</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {latestRows.map((facility) => {
+                const excess = Math.max(
+                  0,
+                  facility.energy -
+                    (
+                      Number(
+                        facility.expected_energy_kwh
+                      ) || 320
+                    )
+                );
+
+                const loss =
+                  Number(
+                    facility.estimated_water_loss_kl
+                  ) || 0;
+
+                return (
+                  <tr
+                    key={
+                      facility.facility_code
+                    }
+                  >
+                    <td>
+                      <b>
+                        {facility.facility_name ||
+                          facility.facility_code}
+                      </b>
+
+                      <small>
+                        {facility.facility_code}
+                      </small>
+                    </td>
+
+                    <td>
+                      <span
+                        className={`status ${String(
+                          facility.facility_status ||
+                            "healthy"
+                        )
+                          .toLowerCase()
+                          .replaceAll(
+                            " ",
+                            "-"
+                          )}`}
+                      >
+                        {facility.facility_status ||
+                          "healthy"}
+                      </span>
+                    </td>
+
+                    {isEnergy ? (
+                      <>
+                        <td>
+                          {num(
+                            facility.energy
+                          )}{" "}
+                          kWh
+                        </td>
+
+                        <td>
+                          {num(
+                            Number(
+                              facility.expected_energy_kwh
+                            ) || 320
+                          )}{" "}
+                          kWh
+                        </td>
+
+                        <td>
+                          {num(
+                            facility.power
+                          )}{" "}
+                          kW
+                        </td>
+
+                        <td
+                          className={
+                            excess > 0
+                              ? "red"
+                              : "green"
+                          }
+                        >
+                          {num(excess)} kWh
+                        </td>
+                      </>
+                    ) : (
+                      <>
+                        <td>
+                          {num(
+                            facility.water,
+                            2
+                          )}{" "}
+                          kL
+                        </td>
+
+                        <td>
+                          {num(
+                            facility.flow
+                          )}{" "}
+                          L/min
+                        </td>
+
+                        <td>
+                          {num(
+                            facility.pressure,
+                            2
+                          )}{" "}
+                          bar
+                        </td>
+
+                        <td
+                          className={
+                            loss > 0
+                              ? "red"
+                              : "green"
+                          }
+                        >
+                          {num(loss, 2)} kL
+                        </td>
+                      </>
+                    )}
+
+                    <td>
+                      {fmtTime(
+                        facility.timestamp
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+
+              {!latestRows.length && (
+                <tr>
+                  <td
+                    colSpan={7}
+                    className="no-results"
+                  >
+                    Waiting for realtime facility
+                    telemetry...
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </Card>
     </Page>
   );
 }
-
 /* =========================
    ALERTS
 ========================= */

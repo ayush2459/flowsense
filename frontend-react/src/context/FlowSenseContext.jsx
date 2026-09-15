@@ -14,91 +14,267 @@ const FlowSenseContext = createContext(null);
 const ENERGY_TARIFF = 8.5;
 const WATER_TARIFF = 35;
 
-function normalizeStatus(value) {
-  const status = String(value || "").toLowerCase();
+const DEFAULT_EXPECTED_ENERGY = 320;
+const DEFAULT_EXPECTED_WATER = 30;
+const DEFAULT_TREATMENT_RATE = 91.1;
+const DEFAULT_REUSE_RATE = 67.3;
 
-  if (status === "critical") return "critical";
-  if (status === "attention" || status === "needs attention") {
+function toNumber(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function normalizeStatus(value) {
+  const status = String(value || "").toLowerCase().trim();
+
+  if (status === "critical") {
+    return "critical";
+  }
+
+  if (
+    status === "attention" ||
+    status === "needs attention" ||
+    status === "warning"
+  ) {
     return "attention";
   }
 
   return "healthy";
 }
 
+function calculateEnergyLoss(data, detection, expectedEnergy) {
+  const explicitLoss =
+    detection?.estimated_energy_loss_kwh ??
+    data?.estimated_energy_loss_kwh;
+
+  if (
+    explicitLoss !== undefined &&
+    explicitLoss !== null &&
+    Number.isFinite(Number(explicitLoss))
+  ) {
+    return Math.max(0, Number(explicitLoss));
+  }
+
+  return Math.max(
+    0,
+    toNumber(data?.energy_kwh) -
+      toNumber(expectedEnergy, DEFAULT_EXPECTED_ENERGY)
+  );
+}
+
+function calculateWaterLoss(data, detection, expectedWater) {
+  // The realtime simulator already sends the actual calculated
+  // water loss. Prefer that value over backend detection output,
+  // because backend detection may legitimately return 0.
+  const dataLoss = data?.estimated_water_loss_kl;
+
+  if (
+    dataLoss !== undefined &&
+    dataLoss !== null &&
+    Number.isFinite(Number(dataLoss))
+  ) {
+    return Math.max(0, Number(dataLoss));
+  }
+
+  // Use backend detection loss only when the realtime telemetry
+  // packet does not contain a water-loss value.
+  const detectionLoss =
+    detection?.estimated_water_loss_kl;
+
+  if (
+    detectionLoss !== undefined &&
+    detectionLoss !== null &&
+    Number.isFinite(Number(detectionLoss))
+  ) {
+    return Math.max(0, Number(detectionLoss));
+  }
+
+  // Final fallback: calculate excess water consumption
+  // against the expected baseline.
+  const waterConsumption =
+    toNumber(data?.water_kl);
+
+  const expectedConsumption =
+    toNumber(
+      expectedWater,
+      DEFAULT_EXPECTED_WATER
+    );
+
+  return Math.max(
+    0,
+    waterConsumption - expectedConsumption
+  );
+}
 function normalizeMessage(message) {
   const data = message?.data || {};
   const detection = message?.detection || {};
+
+  const expectedEnergy = toNumber(
+    data.expected_energy_kwh,
+    DEFAULT_EXPECTED_ENERGY
+  );
+
+  const expectedWater = toNumber(
+    data.expected_water_kl,
+    DEFAULT_EXPECTED_WATER
+  );
 
   const anomalies = Array.isArray(detection.anomalies)
     ? detection.anomalies
     : [];
 
-  const primaryAnomaly = detection.primary_anomaly || null;
+  const primaryAnomaly =
+    detection.primary_anomaly || null;
 
   const rawStatus =
     detection.facility_status ||
     data.status ||
-    (anomalies.length || primaryAnomaly ? "attention" : "healthy");
+    (Boolean(data.anomaly) ||
+    anomalies.length ||
+    primaryAnomaly
+      ? "attention"
+      : "healthy");
+
+  const energy = toNumber(data.energy_kwh);
+  const water = toNumber(data.water_kl);
+
+  const power = toNumber(
+    data.power_kw ??
+      data.power ??
+      data.demand_kw
+  );
+
+  const waterFlow = toNumber(
+    data.water_flow_lpm ??
+      data.flow_lpm
+  );
 
   return {
-    facility_code: message?.facility_code || null,
+    facility_code:
+      message?.facility_code ||
+      data.facility_code ||
+      null,
+
     timestamp:
       message?.timestamp ||
       data.reading_time ||
       new Date().toISOString(),
 
-    energy_kwh: Number(data.energy_kwh ?? 0),
-    expected_energy_kwh: Number(data.expected_energy_kwh ?? 320),
-    water_kl: Number(data.water_kl ?? 0),
-    expected_water_kl: Number(data.expected_water_kl ?? 30),
-    power_kw: Number(data.power_kw ?? 0),
-    voltage_v: Number(data.voltage_v ?? 0),
-    current_a: Number(data.current_a ?? 0),
+    // Energy
+    energy_kwh: energy,
+    expected_energy_kwh: expectedEnergy,
 
-    water_flow_lpm: Number(data.water_flow_lpm ?? 0),
-    water_pressure_bar: Number(data.water_pressure_bar ?? 0),
+    // Water
+    water_kl: water,
+    expected_water_kl: expectedWater,
 
-    treatment_rate: Number(data.treatment_rate ?? data.treatment_percent ?? 91.1),
-    reuse_rate: Number(data.reuse_rate ?? data.reuse_percent ?? 67.3),
-
-    temperature_c: Number(data.temperature_c ?? 0),
-    humidity_percent: Number(data.humidity_percent ?? 0),
-    vibration_mm_s: Number(data.vibration_mm_s ?? 0),
-
-    leak_detected: Boolean(data.leak_detected),
-
-    telemetry_anomaly: Boolean(data.anomaly),
-    telemetry_anomaly_type: data.anomaly_type || null,
-    telemetry_status: normalizeStatus(data.status),
-
-    facility_status: normalizeStatus(rawStatus),
-
-    anomaly_count: Number(
-      detection.anomaly_count ?? anomalies.length
+    // Electrical
+    power_kw: power,
+    voltage_v: toNumber(
+      data.voltage_v ??
+        data.voltage
+    ),
+    current_a: toNumber(
+      data.current_a ??
+        data.current
     ),
 
-    estimated_energy_loss_kwh: Number(
-      detection.estimated_energy_loss_kwh ?? 0
+    // Water telemetry
+    water_flow_lpm: waterFlow,
+    water_pressure_bar: toNumber(
+      data.water_pressure_bar ??
+        data.pressure_bar ??
+        data.water_pressure
     ),
 
-    estimated_water_loss_kl: Number(
-      detection.estimated_water_loss_kl ?? 0
+    // Treatment / reuse
+    treatment_rate: toNumber(
+      data.treatment_rate ??
+        data.treatment_percent,
+      DEFAULT_TREATMENT_RATE
     ),
+
+    reuse_rate: toNumber(
+      data.reuse_rate ??
+        data.reuse_percent,
+      DEFAULT_REUSE_RATE
+    ),
+
+    // Environment
+    temperature_c: toNumber(
+      data.temperature_c ??
+        data.temperature
+    ),
+
+    humidity_percent: toNumber(
+      data.humidity_percent ??
+        data.humidity
+    ),
+
+    vibration_mm_s: toNumber(
+      data.vibration_mm_s ??
+        data.vibration
+    ),
+
+    // Leak detection
+    leak_detected: Boolean(
+      data.leak_detected
+    ),
+
+    // Realtime anomaly
+    telemetry_anomaly: Boolean(
+      data.anomaly
+    ),
+
+    telemetry_anomaly_type:
+      data.anomaly_type || null,
+
+    telemetry_status:
+      normalizeStatus(data.status),
+
+    facility_status:
+      normalizeStatus(rawStatus),
+
+    anomaly_count: toNumber(
+      detection.anomaly_count ??
+        anomalies.length
+    ),
+
+    // Loss calculations
+    estimated_energy_loss_kwh:
+      calculateEnergyLoss(
+        data,
+        detection,
+        expectedEnergy
+      ),
+
+    estimated_water_loss_kl:
+      calculateWaterLoss(
+        data,
+        detection,
+        expectedWater
+      ),
 
     anomalies,
-    primary_anomaly: primaryAnomaly,
 
-    energy_score: Number(
-      detection.efficiency?.energy_score ?? 0
+    primary_anomaly:
+      primaryAnomaly,
+
+    // Efficiency
+    energy_score: toNumber(
+      detection.efficiency?.energy_score
     ),
 
-    water_score: Number(
-      detection.efficiency?.water_score ?? 0
+    water_score: toNumber(
+      detection.efficiency?.water_score
     ),
 
-    recommendation: detection.recommendation || null,
+    recommendation:
+      detection.recommendation ||
+      null,
 
     _raw: message,
+
     _receivedAt: Date.now()
   };
 }
@@ -106,16 +282,21 @@ function normalizeMessage(message) {
 function buildAlert(facility) {
   if (
     !facility ||
-    (!facility.telemetry_anomaly &&
+    (
+      !facility.telemetry_anomaly &&
       !facility.anomaly_count &&
       !facility.primary_anomaly &&
-      !facility.anomalies?.length)
+      !facility.anomalies?.length
+    )
   ) {
     return null;
   }
 
-  const primary = facility.primary_anomaly || {};
-  const firstAnomaly = facility.anomalies?.[0] || {};
+  const primary =
+    facility.primary_anomaly || {};
+
+  const firstAnomaly =
+    facility.anomalies?.[0] || {};
 
   const type =
     facility.telemetry_anomaly_type ||
@@ -128,31 +309,37 @@ function buildAlert(facility) {
     String(
       primary.severity ||
         firstAnomaly.severity ||
-        facility.facility_status
+        facility.facility_status ||
+        ""
     ).toLowerCase() === "critical"
       ? "Critical"
       : "Warning";
 
   return {
     id: `${facility.facility_code}-${type}`,
+
     anomaly_id:
       primary.anomaly_id ||
       firstAnomaly.anomaly_id ||
       null,
 
-    facility_code: facility.facility_code,
+    facility_code:
+      facility.facility_code,
+
     anomaly_type: type,
+
     severity,
 
     description:
       primary.description ||
       firstAnomaly.description ||
-      (type === "water_leak"
-        ? "Possible water leakage detected by realtime IoT telemetry."
-        : `Realtime IoT signal indicates ${String(type).replaceAll(
-            "_",
-            " "
-          )}.`),
+      (
+        type === "water_leak"
+          ? "Possible water leakage detected by realtime IoT telemetry."
+          : `Realtime IoT signal indicates ${String(
+              type
+            ).replaceAll("_", " ")}.`
+      ),
 
     detected_at:
       primary.detected_at ||
@@ -167,76 +354,112 @@ function buildAlert(facility) {
       "Realtime IoT",
 
     deviation_percent:
-      Number(primary.deviation_percent) ||
-      Number(firstAnomaly.deviation_percent) ||
-      0,
+      toNumber(
+        primary.deviation_percent ??
+          firstAnomaly.deviation_percent
+      ),
 
     estimated_loss:
-      Number(primary.estimated_loss) ||
-      Number(firstAnomaly.estimated_loss) ||
-      0
+      toNumber(
+        primary.estimated_loss ??
+          firstAnomaly.estimated_loss
+      )
   };
 }
 
-function mergeFacilityMetadata(metadata, live) {
+function mergeFacilityMetadata(
+  metadata,
+  live
+) {
   const map = new Map();
 
-  (Array.isArray(metadata) ? metadata : []).forEach((facility) => {
+  (
+    Array.isArray(metadata)
+      ? metadata
+      : []
+  ).forEach((facility) => {
     if (facility?.facility_code) {
-      map.set(facility.facility_code, {
-        ...facility
-      });
+      map.set(
+        facility.facility_code,
+        {
+          ...facility
+        }
+      );
     }
   });
 
-  Object.entries(live || {}).forEach(([code, telemetry]) => {
-    map.set(code, {
-      ...(map.get(code) || {}),
-      ...telemetry,
+  Object.entries(live || {}).forEach(
+    ([code, telemetry]) => {
+      const existing =
+        map.get(code) || {};
 
-      // Preserve metadata if the websocket payload doesn't contain it.
-      facility_code:
-        telemetry.facility_code ||
-        map.get(code)?.facility_code ||
-        code,
+      map.set(code, {
+        ...existing,
+        ...telemetry,
 
-      facility_name:
-        map.get(code)?.facility_name ||
-        telemetry.facility_name ||
-        code,
+        facility_code:
+          telemetry.facility_code ||
+          existing.facility_code ||
+          code,
 
-      city:
-        map.get(code)?.city ||
-        telemetry.city ||
-        "—",
+        facility_name:
+          existing.facility_name ||
+          telemetry.facility_name ||
+          code,
 
-      iot_device:
-        map.get(code)?.iot_device ||
-        telemetry.iot_device ||
-        null
-    });
-  });
+        city:
+          existing.city ||
+          telemetry.city ||
+          "—",
 
-  return Object.fromEntries(map.entries());
+        iot_device:
+          existing.iot_device ||
+          telemetry.iot_device ||
+          null
+      });
+    }
+  );
+
+  return Object.fromEntries(
+    map.entries()
+  );
 }
 
-export function FlowSenseProvider({ children }) {
-  const facilitiesRef = useRef({});
-  const metadataRef = useRef([]);
-  const alertsRef = useRef({});
-  const historyRef = useRef({});
+export function FlowSenseProvider({
+  children
+}) {
+  const facilitiesRef =
+    useRef({});
 
-  const [facilities, setFacilities] = useState({});
-  const [metadataLoaded, setMetadataLoaded] = useState(false);
-  const [alerts, setAlerts] = useState([]);
-  const [connection, setConnection] = useState("connecting");
-  const [lastTick, setLastTick] = useState(null);
+  const metadataRef =
+    useRef([]);
+
+  const alertsRef =
+    useRef({});
+
+  const historyRef =
+    useRef({});
+
+  const [facilities, setFacilities] =
+    useState({});
+
+  const [metadataLoaded, setMetadataLoaded] =
+    useState(false);
+
+  const [alerts, setAlerts] =
+    useState([]);
+
+  const [connection, setConnection] =
+    useState("connecting");
+
+  const [lastTick, setLastTick] =
+    useState(null);
 
   /*
-   * Load static facility metadata once.
+   * Load static metadata and existing alerts once.
    *
-   * WebSocket telemetry is responsible for live values.
-   * REST is only used here to supply names, cities and device metadata.
+   * REST provides facility information.
+   * WebSocket provides realtime telemetry.
    */
   useEffect(() => {
     let alive = true;
@@ -245,46 +468,66 @@ export function FlowSenseProvider({ children }) {
       api.facilities(),
       api.anomalies(100)
     ])
-      .then(([facilityRows, anomalyRows]) => {
-        if (!alive) return;
+      .then(
+        ([
+          facilityRows,
+          anomalyRows
+        ]) => {
+          if (!alive) {
+            return;
+          }
 
-        metadataRef.current = Array.isArray(facilityRows)
-          ? facilityRows
-          : [];
+          metadataRef.current =
+            Array.isArray(facilityRows)
+              ? facilityRows
+              : [];
 
-        if (Array.isArray(anomalyRows)) {
-          anomalyRows.forEach((anomaly) => {
-            const key =
-              anomaly.id ||
-              anomaly.anomaly_id ||
-              `${anomaly.facility_code}:${anomaly.anomaly_type}`;
+          if (
+            Array.isArray(anomalyRows)
+          ) {
+            anomalyRows.forEach(
+              (anomaly) => {
+                const key =
+                  anomaly.id ||
+                  anomaly.anomaly_id ||
+                  `${anomaly.facility_code}:${anomaly.anomaly_type}`;
 
-            alertsRef.current[key] = anomaly;
-          });
-        }
+                alertsRef.current[key] =
+                  anomaly;
+              }
+            );
+          }
 
-        setMetadataLoaded(true);
+          setMetadataLoaded(true);
 
-        setFacilities((current) =>
-          mergeFacilityMetadata(
-            metadataRef.current,
-            current
-          )
-        );
-
-        setAlerts(
-          Object.values(alertsRef.current)
-            .sort(
-              (a, b) =>
-                new Date(b.detected_at || 0) -
-                new Date(a.detected_at || 0)
+          setFacilities((current) =>
+            mergeFacilityMetadata(
+              metadataRef.current,
+              current
             )
-            .slice(0, 100)
-        );
-      })
+          );
+
+          setAlerts(
+            Object.values(
+              alertsRef.current
+            )
+              .sort(
+                (a, b) =>
+                  new Date(
+                    b.detected_at || 0
+                  ) -
+                  new Date(
+                    a.detected_at || 0
+                  )
+              )
+              .slice(0, 100)
+          );
+        }
+      )
       .catch(() => {
         if (alive) {
           metadataRef.current = [];
+
           setMetadataLoaded(true);
         }
       });
@@ -295,86 +538,169 @@ export function FlowSenseProvider({ children }) {
   }, []);
 
   /*
-   * ONE realtime WebSocket for the entire application.
-   *
-   * Every page consumes this provider instead of creating its
-   * own WebSocket connection.
+   * ONE realtime WebSocket for the
+   * entire application.
    */
   useEffect(() => {
-    const disconnect = connectAllFacilities({
-      onStatus: setConnection,
+    const disconnect =
+      connectAllFacilities({
+        onStatus: setConnection,
 
-      onMessage: (message) => {
-        const facility = normalizeMessage(message);
-        const code = facility.facility_code;
+        onMessage: (message) => {
+          const facility =
+            normalizeMessage(message);
 
-        if (!code) return;
+          const code =
+            facility.facility_code;
 
-        const previous = facilitiesRef.current[code] || {};
-
-        facilitiesRef.current[code] = {
-          ...previous,
-          ...facility,
-          expected_energy_kwh: Number(facility.expected_energy_kwh) > 0 ? facility.expected_energy_kwh : previous.expected_energy_kwh || 320,
-          expected_water_kl: Number(facility.expected_water_kl) > 0 ? facility.expected_water_kl : previous.expected_water_kl || 30,
-          treatment_rate: Number(facility.treatment_rate) > 0 ? facility.treatment_rate : previous.treatment_rate || 91.1,
-          reuse_rate: Number(facility.reuse_rate) > 0 ? facility.reuse_rate : previous.reuse_rate || 67.3
-        };
-
-        const previousHistory =
-          historyRef.current[code] || [];
-
-        historyRef.current[code] = [
-          ...previousHistory,
-          {
-            timestamp: facility.timestamp,
-            energy_kwh: facility.energy_kwh,
-            water_kl: facility.water_kl,
-            power_kw: facility.power_kw,
-            water_flow_lpm: facility.water_flow_lpm,
-            water_pressure_bar:
-              facility.water_pressure_bar
+          if (!code) {
+            return;
           }
-        ].slice(-120);
 
-        const alert = buildAlert(facility);
+          const previous =
+            facilitiesRef.current[code] ||
+            {};
 
-        if (alert) {
-          alertsRef.current[alert.id] = {
-            ...alertsRef.current[alert.id],
-            ...alert
+          facilitiesRef.current[code] = {
+            ...previous,
+            ...facility,
+
+            expected_energy_kwh:
+              toNumber(
+                facility.expected_energy_kwh,
+                previous.expected_energy_kwh ||
+                  DEFAULT_EXPECTED_ENERGY
+              ),
+
+            expected_water_kl:
+              toNumber(
+                facility.expected_water_kl,
+                previous.expected_water_kl ||
+                  DEFAULT_EXPECTED_WATER
+              ),
+
+            treatment_rate:
+              toNumber(
+                facility.treatment_rate,
+                previous.treatment_rate ||
+                  DEFAULT_TREATMENT_RATE
+              ),
+
+            reuse_rate:
+              toNumber(
+                facility.reuse_rate,
+                previous.reuse_rate ||
+                  DEFAULT_REUSE_RATE
+              )
           };
-        }
 
-        const merged = mergeFacilityMetadata(
-          metadataRef.current,
-          facilitiesRef.current
-        );
+          /*
+           * Keep the last 120 readings
+           * per facility.
+           */
+          const previousHistory =
+            historyRef.current[code] ||
+            [];
 
-        setFacilities(merged);
+          historyRef.current[code] = [
+            ...previousHistory,
 
-        setAlerts(
-          Object.values(alertsRef.current)
-            .sort(
-              (a, b) =>
-                new Date(b.detected_at || 0) -
-                new Date(a.detected_at || 0)
+            {
+              timestamp:
+                facility.timestamp,
+
+              energy_kwh:
+                facility.energy_kwh,
+
+              expected_energy_kwh:
+                facility.expected_energy_kwh,
+
+              water_kl:
+                facility.water_kl,
+
+              expected_water_kl:
+                facility.expected_water_kl,
+
+              power_kw:
+                facility.power_kw,
+
+              water_flow_lpm:
+                facility.water_flow_lpm,
+
+              water_pressure_bar:
+                facility.water_pressure_bar,
+
+              estimated_energy_loss_kwh:
+                facility.estimated_energy_loss_kwh,
+
+              estimated_water_loss_kl:
+                facility.estimated_water_loss_kl
+            }
+          ].slice(-120);
+
+          /*
+           * Build/update realtime alert.
+           */
+          const alert =
+            buildAlert(facility);
+
+          if (alert) {
+            alertsRef.current[
+              alert.id
+            ] = {
+              ...alertsRef.current[
+                alert.id
+              ],
+              ...alert
+            };
+          }
+
+          /*
+           * Merge live telemetry with
+           * static facility metadata.
+           */
+          const merged =
+            mergeFacilityMetadata(
+              metadataRef.current,
+              facilitiesRef.current
+            );
+
+          setFacilities(merged);
+
+          setAlerts(
+            Object.values(
+              alertsRef.current
             )
-            .slice(0, 100)
-        );
+              .sort(
+                (a, b) =>
+                  new Date(
+                    b.detected_at || 0
+                  ) -
+                  new Date(
+                    a.detected_at || 0
+                  )
+              )
+              .slice(0, 100)
+          );
 
-        setLastTick(facility.timestamp);
-      }
-    });
+          setLastTick(
+            facility.timestamp
+          );
+        }
+      });
 
     return disconnect;
   }, []);
 
   const facilityList = useMemo(
-    () => Object.values(facilities),
+    () =>
+      Object.values(facilities),
     [facilities]
   );
 
+  /*
+   * Portfolio totals.
+   */
   const totals = useMemo(() => {
     let energy = 0;
     let water = 0;
@@ -382,18 +708,35 @@ export function FlowSenseProvider({ children }) {
     let energyLoss = 0;
     let waterLoss = 0;
 
-    facilityList.forEach((facility) => {
-      energy += Number(facility.energy_kwh) || 0;
-      water += Number(facility.water_kl) || 0;
-      power += Number(facility.power_kw) || 0;
-      energyLoss +=
-        Number(facility.estimated_energy_loss_kwh) || 0;
-      waterLoss +=
-        Number(facility.estimated_water_loss_kl) || 0;
-    });
+    facilityList.forEach(
+      (facility) => {
+        energy += toNumber(
+          facility.energy_kwh
+        );
 
-    const energyCost = energy * ENERGY_TARIFF;
-    const waterCost = water * WATER_TARIFF;
+        water += toNumber(
+          facility.water_kl
+        );
+
+        power += toNumber(
+          facility.power_kw
+        );
+
+        energyLoss += toNumber(
+          facility.estimated_energy_loss_kwh
+        );
+
+        waterLoss += toNumber(
+          facility.estimated_water_loss_kl
+        );
+      }
+    );
+
+    const energyCost =
+      energy * ENERGY_TARIFF;
+
+    const waterCost =
+      water * WATER_TARIFF;
 
     return {
       energy,
@@ -401,24 +744,33 @@ export function FlowSenseProvider({ children }) {
       power,
       energyLoss,
       waterLoss,
+
       energyCost,
       waterCost,
-      totalCost: energyCost + waterCost
+
+      totalCost:
+        energyCost + waterCost
     };
   }, [facilityList]);
 
+  /*
+   * Facility health counts.
+   */
   const statusCounts = useMemo(
     () =>
       facilityList.reduce(
         (result, facility) => {
-          const status = normalizeStatus(
-            facility.facility_status ||
-              facility.telemetry_status
-          );
+          const status =
+            normalizeStatus(
+              facility.facility_status ||
+                facility.telemetry_status
+            );
 
           if (status === "critical") {
             result.critical += 1;
-          } else if (status === "attention") {
+          } else if (
+            status === "attention"
+          ) {
             result.attention += 1;
           } else {
             result.healthy += 1;
@@ -435,33 +787,48 @@ export function FlowSenseProvider({ children }) {
     [facilityList]
   );
 
-  const averageEfficiency = useMemo(() => {
-    if (!facilityList.length) {
+  /*
+   * Average realtime efficiency.
+   */
+  const averageEfficiency =
+    useMemo(() => {
+      if (!facilityList.length) {
+        return {
+          energy: 0,
+          water: 0
+        };
+      }
+
+      const energy =
+        facilityList.reduce(
+          (sum, facility) =>
+            sum +
+            toNumber(
+              facility.energy_score
+            ),
+          0
+        ) / facilityList.length;
+
+      const water =
+        facilityList.reduce(
+          (sum, facility) =>
+            sum +
+            toNumber(
+              facility.water_score
+            ),
+          0
+        ) / facilityList.length;
+
       return {
-        energy: 0,
-        water: 0
+        energy: Number(
+          energy.toFixed(1)
+        ),
+
+        water: Number(
+          water.toFixed(1)
+        )
       };
-    }
-
-    const energy =
-      facilityList.reduce(
-        (sum, facility) =>
-          sum + (Number(facility.energy_score) || 0),
-        0
-      ) / facilityList.length;
-
-    const water =
-      facilityList.reduce(
-        (sum, facility) =>
-          sum + (Number(facility.water_score) || 0),
-        0
-      ) / facilityList.length;
-
-    return {
-      energy: Number(energy.toFixed(1)),
-      water: Number(water.toFixed(1))
-    };
-  }, [facilityList]);
+    }, [facilityList]);
 
   const getFacility = (code) =>
     facilitiesRef.current[code] ||
@@ -469,14 +836,17 @@ export function FlowSenseProvider({ children }) {
     null;
 
   const getHistory = (code) =>
-    historyRef.current[code] || [];
+    historyRef.current[code] ||
+    [];
 
   const value = {
     facilities,
     facilityList,
+
     metadataLoaded,
 
     alerts,
+
     connection,
     lastTick,
 
@@ -487,19 +857,25 @@ export function FlowSenseProvider({ children }) {
     getFacility,
     getHistory,
 
-    energyTariff: ENERGY_TARIFF,
-    waterTariff: WATER_TARIFF
+    energyTariff:
+      ENERGY_TARIFF,
+
+    waterTariff:
+      WATER_TARIFF
   };
 
   return (
-    <FlowSenseContext.Provider value={value}>
+    <FlowSenseContext.Provider
+      value={value}
+    >
       {children}
     </FlowSenseContext.Provider>
   );
 }
 
 export function useFlowSense() {
-  const context = useContext(FlowSenseContext);
+  const context =
+    useContext(FlowSenseContext);
 
   if (!context) {
     throw new Error(
