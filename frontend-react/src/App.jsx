@@ -1908,57 +1908,877 @@ function Detail({
 ========================= */
 
 function Analytics({ facilities }) {
+  const {
+    facilityList,
+    alerts,
+    connection,
+    lastTick,
+    getHistory
+  } = useFlowSense();
+
+  const [selectedFacility, setSelectedFacility] =
+    useState("all");
+
+  const [range, setRange] =
+    useState("24h");
+
+  const [view, setView] =
+    useState("energy");
+
+  const liveFacilities =
+    facilityList?.length
+      ? facilityList
+      : facilities || [];
+
+  const selectedFacilities =
+    selectedFacility === "all"
+      ? liveFacilities
+      : liveFacilities.filter(
+          (f) =>
+            f.facility_code === selectedFacility
+        );
+
+  const historyRows = [];
+
+  selectedFacilities.forEach((facility) => {
+    const history =
+      getHistory(facility.facility_code) || [];
+
+    history.forEach((row) => {
+      historyRows.push({
+        ...row,
+        facility_code:
+          facility.facility_code,
+        facility_name:
+          facility.facility_name ||
+          facility.name ||
+          facility.facility_code
+      });
+    });
+  });
+
+  const rangeMs = {
+    "1h": 60 * 60 * 1000,
+    "6h": 6 * 60 * 60 * 1000,
+    "24h": 24 * 60 * 60 * 1000,
+    "7d": 7 * 24 * 60 * 60 * 1000
+  }[range];
+
+  const now = Date.now();
+
+  const filteredRows =
+    historyRows
+      .filter((row) => {
+        const timestamp =
+          new Date(row.timestamp).getTime();
+
+        return (
+          Number.isFinite(timestamp) &&
+          now - timestamp <= rangeMs
+        );
+      })
+      .sort(
+        (a, b) =>
+          new Date(a.timestamp) -
+          new Date(b.timestamp)
+      );
+
+  const chartRows =
+    filteredRows.slice(-120).map((row) => ({
+      ...row,
+      time: fmtTime(row.timestamp),
+      energy:
+        Number(row.energy_kwh) || 0,
+      expectedEnergy:
+        Number(row.expected_energy_kwh) || 0,
+      water:
+        Number(row.water_kl) || 0,
+      expectedWater:
+        Number(row.expected_water_kl) || 0,
+      power:
+        Number(row.power_kw) || 0,
+      flow:
+        Number(row.water_flow_lpm) || 0,
+      pressure:
+        Number(row.water_pressure_bar) || 0,
+      energyLoss:
+        Number(
+          row.estimated_energy_loss_kwh
+        ) || 0,
+      waterLoss:
+        Number(
+          row.estimated_water_loss_kl
+        ) || 0
+    }));
+
+  const latestRows =
+    selectedFacilities.map((facility) => {
+      const history =
+        getHistory(
+          facility.facility_code
+        ) || [];
+
+      return {
+        facility,
+        latest:
+          history.length
+            ? history[history.length - 1]
+            : null
+      };
+    });
+
+  const latestEnergy =
+    latestRows.reduce(
+      (sum, item) =>
+        sum +
+        (Number(
+          item.latest?.energy_kwh
+        ) || 0),
+      0
+    );
+
+  const latestExpectedEnergy =
+    latestRows.reduce(
+      (sum, item) =>
+        sum +
+        (Number(
+          item.latest
+            ?.expected_energy_kwh
+        ) || 0),
+      0
+    );
+
+  const latestWater =
+    latestRows.reduce(
+      (sum, item) =>
+        sum +
+        (Number(
+          item.latest?.water_kl
+        ) || 0),
+      0
+    );
+
+  const latestExpectedWater =
+    latestRows.reduce(
+      (sum, item) =>
+        sum +
+        (Number(
+          item.latest
+            ?.expected_water_kl
+        ) || 0),
+      0
+    );
+
+  const energyLoss =
+    latestRows.reduce(
+      (sum, item) =>
+        sum +
+        (Number(
+          item.latest
+            ?.estimated_energy_loss_kwh
+        ) || 0),
+      0
+    );
+
+  const waterLoss =
+    latestRows.reduce(
+      (sum, item) =>
+        sum +
+        (Number(
+          item.latest
+            ?.estimated_water_loss_kl
+        ) || 0),
+      0
+    );
+
+  const avgPower =
+    latestRows.length
+      ? latestRows.reduce(
+          (sum, item) =>
+            sum +
+            (Number(
+              item.latest?.power_kw
+            ) || 0),
+          0
+        ) / latestRows.length
+      : 0;
+
+  const avgFlow =
+    latestRows.length
+      ? latestRows.reduce(
+          (sum, item) =>
+            sum +
+            (Number(
+              item.latest
+                ?.water_flow_lpm
+            ) || 0),
+          0
+        ) / latestRows.length
+      : 0;
+
+  const energyVariance =
+    latestEnergy -
+    latestExpectedEnergy;
+
+  const waterVariance =
+    latestWater -
+    latestExpectedWater;
+
+  const relevantAlerts =
+    alerts.filter(
+      (alert) =>
+        selectedFacility === "all" ||
+        alert.facility_code ===
+          selectedFacility
+    );
+
+  const topDrivers =
+    latestRows
+      .map(({ facility, latest }) => {
+        const energy =
+          Number(facility?.energy_kwh) ||
+          Number(latest?.energy_kwh) ||
+          0;
+
+        const expectedEnergy =
+          Number(facility?.expected_energy_kwh) ||
+          Number(latest?.expected_energy_kwh) ||
+          0;
+
+        const power =
+          Number(facility?.power_kw) ||
+          Number(latest?.power_kw) ||
+          0;
+
+        const reportedLoss =
+          Number(
+            facility?.estimated_energy_loss_kwh
+          );
+
+        const calculatedExcess = Math.max(
+          0,
+          energy - expectedEnergy
+        );
+
+        const energyLoss =
+          Number.isFinite(reportedLoss) && reportedLoss > 0
+            ? Math.max(0, reportedLoss)
+            : calculatedExcess;
+
+        return {
+          facility,
+          power,
+          energy,
+          expectedEnergy,
+          energyLoss,
+
+          // Live driver score:
+          // use actual excess when present,
+          // otherwise use current power demand.
+          driverScore:
+            energyLoss > 0
+              ? energyLoss
+              : power
+        };
+      })
+      .sort(
+        (a, b) =>
+          b.driverScore - a.driverScore
+      )
+      .slice(0, 5);
+
   return (
     <Page
       title="Analytics"
-      sub="Resource trends, efficiency and facility performance"
+      sub="Historical patterns, energy drivers, correlations and operating-condition insights"
     >
-      <div className="workspace-grid">
+      <div className="analytics-controls">
+        <select
+          value={selectedFacility}
+          onChange={(e) =>
+            setSelectedFacility(
+              e.target.value
+            )
+          }
+        >
+          <option value="all">
+            All Facilities
+          </option>
+
+          {liveFacilities.map(
+            (facility) => (
+              <option
+                key={
+                  facility.facility_code
+                }
+                value={
+                  facility.facility_code
+                }
+              >
+                {facility.facility_name ||
+                  facility.name ||
+                  facility.facility_code}
+              </option>
+            )
+          )}
+        </select>
+
+        <select
+          value={range}
+          onChange={(e) =>
+            setRange(e.target.value)
+          }
+        >
+          <option value="1h">
+            Last 1 Hour
+          </option>
+          <option value="6h">
+            Last 6 Hours
+          </option>
+          <option value="24h">
+            Last 24 Hours
+          </option>
+          <option value="7d">
+            Last 7 Days
+          </option>
+        </select>
+
+        <div className="analytics-tabs">
+          <button
+            className={
+              view === "energy"
+                ? "active"
+                : ""
+            }
+            onClick={() =>
+              setView("energy")
+            }
+          >
+            Energy Analytics
+          </button>
+
+          <button
+            className={
+              view === "water"
+                ? "active"
+                : ""
+            }
+            onClick={() =>
+              setView("water")
+            }
+          >
+            Water Analytics
+          </button>
+
+          <button
+            className={
+              view === "correlation"
+                ? "active"
+                : ""
+            }
+            onClick={() =>
+              setView("correlation")
+            }
+          >
+            Correlation
+          </button>
+        </div>
+
+        <div className="analytics-live">
+          <span
+            className={
+              connection === "live"
+                ? "live-dot"
+                : "live-dot muted"
+            }
+          />
+          {connection === "live"
+            ? "LIVE"
+            : "RECONNECTING"}
+
+          <small>
+            Updated {fmtTime(lastTick)}
+          </small>
+        </div>
+      </div>
+
+      <div className="analytics-kpis">
         <Card>
           <PanelHead
-            icon={BarChart3}
-            title="Portfolio Analytics"
-            sub="Connected facilities"
+            icon={Zap}
+            title="Energy"
+            sub="Current live state"
           />
 
-          <div className="workspace-stat">
-            <strong>
-              {facilities.length}
-            </strong>
-            <span>
-              facilities connected
-            </span>
+          <strong className="analytics-value">
+            {num(latestEnergy, 1)}
+            <small> kWh</small>
+          </strong>
+
+          <div className="analytics-meta">
+            Expected{" "}
+            {num(
+              latestExpectedEnergy,
+              1
+            )}{" "}
+            kWh
           </div>
         </Card>
 
         <Card>
           <PanelHead
-            icon={Zap}
-            title="Energy Intelligence"
-            sub="Realtime resource analysis"
+            icon={Droplets}
+            title="Water"
+            sub="Current live state"
           />
 
-          <p className="workspace-copy">
-            FlowSense compares energy telemetry
-            with expected operating patterns to
-            highlight abnormal consumption.
-          </p>
+          <strong className="analytics-value">
+            {num(latestWater, 1)}
+            <small> kL</small>
+          </strong>
+
+          <div className="analytics-meta">
+            Expected{" "}
+            {num(
+              latestExpectedWater,
+              1
+            )}{" "}
+            kL
+          </div>
         </Card>
 
         <Card>
           <PanelHead
-            icon={Droplets}
-            title="Water Intelligence"
-            sub="Loss and flow analysis"
+            icon={Activity}
+            title="Power"
+            sub="Live average"
           />
 
-          <p className="workspace-copy">
-            Water input, flow, pressure and leak
-            signals are combined to identify
-            potential unaccounted usage.
-          </p>
+          <strong className="analytics-value">
+            {num(avgPower, 1)}
+            <small> kW</small>
+          </strong>
+
+          <div className="analytics-meta">
+            Flow{" "}
+            {num(avgFlow, 1)} L/min
+          </div>
+        </Card>
+
+        <Card>
+          <PanelHead
+            icon={AlertTriangle}
+            title="Anomaly Context"
+            sub="Current monitoring window"
+          />
+
+          <strong className="analytics-value">
+            {relevantAlerts.length}
+          </strong>
+
+          <div className="analytics-meta">
+            Energy variance{" "}
+            {num(
+              energyVariance,
+              1
+            )}{" "}
+            kWh
+          </div>
         </Card>
       </div>
+
+      <div className="analytics-main-grid">
+        <Card className="analytics-chart-card">
+          <PanelHead
+            icon={
+              view === "water"
+                ? Droplets
+                : view === "correlation"
+                ? Activity
+                : Zap
+            }
+            title={
+              view === "water"
+                ? "Water Pattern"
+                : view === "correlation"
+                ? "Energy & Operating Conditions"
+                : "Energy Pattern"
+            }
+            sub="Live telemetry history"
+          />
+
+          <div className="analytics-chart">
+            <ResponsiveContainer
+              width="100%"
+              height={320}
+            >
+              <LineChart
+                data={chartRows}
+              >
+                <CartesianGrid
+                  strokeDasharray="3 3"
+                />
+
+                <XAxis
+                  dataKey="time"
+                  minTickGap={30}
+                />
+
+                <YAxis />
+
+                <Tooltip />
+
+                {view === "water" ? (
+                  <>
+                    <Line
+                      type="monotone"
+                      dataKey="water"
+                      name="Water"
+                      dot={false}
+                      strokeWidth={2}
+                    />
+
+                    <Line
+                      type="monotone"
+                      dataKey="expectedWater"
+                      name="Expected"
+                      dot={false}
+                      strokeWidth={2}
+                    />
+
+                    <Line
+                      type="monotone"
+                      dataKey="flow"
+                      name="Flow L/min"
+                      dot={false}
+                      strokeWidth={1.5}
+                    />
+                  </>
+                ) : view === "correlation" ? (
+                  <>
+                    <Line
+                      type="monotone"
+                      dataKey="energy"
+                      name="Energy"
+                      dot={false}
+                      strokeWidth={2}
+                    />
+
+                    <Line
+                      type="monotone"
+                      dataKey="power"
+                      name="Power kW"
+                      dot={false}
+                      strokeWidth={2}
+                    />
+                  </>
+                ) : (
+                  <>
+                    <Line
+                      type="monotone"
+                      dataKey="energy"
+                      name="Actual"
+                      dot={false}
+                      strokeWidth={2}
+                    />
+
+                    <Line
+                      type="monotone"
+                      dataKey="expectedEnergy"
+                      name="Expected"
+                      dot={false}
+                      strokeWidth={2}
+                    />
+
+                    <Line
+                      type="monotone"
+                      dataKey="power"
+                      name="Power kW"
+                      dot={false}
+                      strokeWidth={1.5}
+                    />
+                  </>
+                )}
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
+
+        <Card className="analytics-insight-card">
+          <PanelHead
+            icon={Sparkles}
+            title="Analytics Insights"
+            sub="Derived from measured telemetry"
+          />
+
+          <div className="analytics-insights">
+            <div>
+              <b>Energy variance</b>
+              <span>
+                {energyVariance > 0
+                  ? `${num(
+                      energyVariance,
+                      1
+                    )} kWh above expected`
+                  : "At or below expected"}
+              </span>
+            </div>
+
+            <div>
+              <b>Water variance</b>
+              <span>
+                {waterVariance > 0
+                  ? `${num(
+                      waterVariance,
+                      1
+                    )} kL above expected`
+                  : "At or below expected"}
+              </span>
+            </div>
+
+            <div>
+              <b>Energy loss signal</b>
+              <span>
+                {num(
+                  energyLoss,
+                  1
+                )} kWh estimated
+              </span>
+            </div>
+
+            <div>
+              <b>Water loss signal</b>
+              <span>
+                {num(
+                  waterLoss,
+                  1
+                )} kL estimated
+              </span>
+            </div>
+          </div>
+        </Card>
+      </div>
+
+      <div className="analytics-secondary-grid">
+        <Card>
+          <PanelHead
+            icon={Zap}
+            title="Top Energy Drivers"
+            sub="Facilities with current loss signals"
+          />
+
+          <div className="analytics-driver-list">
+            {topDrivers.map(
+              (
+                {
+                  facility,
+                  power,
+                  energyLoss
+                },
+                index
+              ) => (
+                <div
+                  className="analytics-driver"
+                  key={
+                    facility.facility_code
+                  }
+                >
+                  <span>
+                    {index + 1}
+                  </span>
+
+                  <div>
+                    <b>
+                      {facility.facility_name ||
+                        facility.name ||
+                        facility.facility_code}
+                    </b>
+
+                    <small>
+                      Power{" "}
+                      {num(
+                        power,
+                        1
+                      )}{" "}
+                      kW
+                    </small>
+                  </div>
+
+                  <strong>
+  {energyLoss > 0
+    ? `${num(energyLoss, 1)} kWh excess`
+    : `${num(power, 1)} kW demand`}
+		</strong>
+                </div>
+              )
+            )}
+          </div>
+        </Card>
+
+        <Card>
+          <PanelHead
+            icon={Waves}
+            title="Operating Conditions"
+            sub="Water flow and pressure context"
+          />
+
+          <div className="analytics-condition">
+            <div>
+              <span>
+                Average Flow
+              </span>
+
+              <strong>
+                {num(
+                  avgFlow,
+                  1
+                )}{" "}
+                L/min
+              </strong>
+            </div>
+
+            <div>
+              <span>
+                Latest Pressure
+              </span>
+
+              <strong>
+                {num(
+                  chartRows[
+                    chartRows.length - 1
+                  ]?.pressure,
+                  2
+                )}{" "}
+                bar
+              </strong>
+            </div>
+
+            <div>
+              <span>
+                Water Excess
+              </span>
+
+              <strong>
+                {num(
+                  Math.max(
+                    0,
+                    waterVariance
+                  ),
+                  1
+                )}{" "}
+                kL
+              </strong>
+            </div>
+          </div>
+        </Card>
+      </div>
+
+      <Card className="analytics-performance-card">
+        <PanelHead
+          icon={ShieldCheck}
+          title="Facility Performance"
+          sub="Live facility telemetry"
+        />
+
+        <div className="analytics-performance-table">
+          <div className="analytics-table-head">
+            <span>Facility</span>
+            <span>Energy</span>
+            <span>Expected</span>
+            <span>Power</span>
+            <span>Water</span>
+            <span>Status</span>
+          </div>
+
+          {latestRows.map(
+            ({
+              facility,
+              latest
+            }) => {
+              const energy =
+                Number(
+                  facility?.energy_kwh ?? latest?.energy_kwh
+                ) || 0;
+
+              const expected =
+                Number(
+                  facility?.expected_energy_kwh ??
+                    latest?.expected_energy_kwh
+                ) || 0;
+
+              const variance =
+                energy - expected;
+
+              return (
+                <div
+                  className="analytics-table-row"
+                  key={
+                    facility.facility_code
+                  }
+                >
+                  <span>
+                    <b>
+                      {facility.facility_name ||
+                        facility.name ||
+                        facility.facility_code}
+                    </b>
+
+                    <small>
+                      {
+                        facility.facility_code
+                      }
+                    </small>
+                  </span>
+
+                  <span>
+                    {num(
+                      energy,
+                      1
+                    )}{" "}
+                    kWh
+                  </span>
+
+                  <span>
+                    {num(
+                      expected,
+                      1
+                    )}{" "}
+                    kWh
+                  </span>
+
+                  <span>
+                    {num(
+                      facility?.power_kw ?? latest?.power_kw,
+                      1
+                    )}{" "}
+                    kW
+                  </span>
+
+                  <span>
+                    {num(
+                      facility?.water_kl ?? latest?.water_kl,
+                      1
+                    )}{" "}
+                    kL
+                  </span>
+
+                  <span
+                    className={
+                      variance > 0
+                        ? "warning"
+                        : "healthy"
+                    }
+                  >
+                    {variance > 0
+                      ? "Watch"
+                      : "Normal"}
+                  </span>
+                </div>
+              );
+            }
+          )}
+        </div>
+      </Card>
     </Page>
   );
 }
