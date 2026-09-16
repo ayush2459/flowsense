@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Building2,
@@ -48,7 +48,7 @@ const time = (v) =>
         minute: "2-digit",
         second: "2-digit"
       })
-    : "—";
+    : "â€”";
 
 const shortTime = (v) =>
   v
@@ -56,7 +56,7 @@ const shortTime = (v) =>
         hour: "2-digit",
         minute: "2-digit"
       })
-    : "—";
+    : "â€”";
 
 function fallbackStatus(f, anomalies) {
   const rows = anomalies.filter(
@@ -137,7 +137,7 @@ function PanelHead({ icon: Icon, title, sub, to }) {
 
       {to && (
         <button className="link" onClick={() => nav(to)}>
-          View Details →
+          View Details â†’
         </button>
       )}
     </div>
@@ -615,6 +615,122 @@ export default function RealtimeOverview({
     return items.slice(0, 3);
   }, [alerts, selectedLive, reuse]);
 
+  /*
+   * Rank facilities from the CURRENT WebSocket telemetry.
+   * The previous UI used display-only formulas (95 - index * 3 and
+   * 55 - index * 4), so the numbers never changed even though telemetry did.
+   *
+   * Prefer the backend's live energy/water efficiency scores. If a score
+   * is unavailable, derive a live fallback from current energy deviation.
+   */
+  const livePerformanceScore = (facility) => {
+    const current = live[facility.facility_code] || {};
+
+    const energy = Number(current.energy_kwh);
+    const expectedEnergy = Number(
+      current.expected_energy_kwh
+    );
+
+    const water = Number(current.water_kl);
+    const expectedWater = Number(
+      current.expected_water_kl
+    );
+
+    const scores = [];
+
+    if (
+      Number.isFinite(energy) &&
+      Number.isFinite(expectedEnergy) &&
+      expectedEnergy > 0
+    ) {
+      const energyDeviation =
+        Math.abs(energy - expectedEnergy) /
+        expectedEnergy *
+        100;
+
+      scores.push(
+        clamp(
+          100 - energyDeviation,
+          0,
+          100
+        )
+      );
+    }
+
+    if (
+      Number.isFinite(water) &&
+      Number.isFinite(expectedWater) &&
+      expectedWater > 0
+    ) {
+      const waterDeviation =
+        Math.abs(water - expectedWater) /
+        expectedWater *
+        100;
+
+      scores.push(
+        clamp(
+          100 - waterDeviation,
+          0,
+          100
+        )
+      );
+    }
+
+    if (scores.length === 0) {
+      return 0;
+    }
+
+    return clamp(
+      Math.round(
+        scores.reduce(
+          (sum, score) => sum + score,
+          0
+        ) / scores.length
+      ),
+      0,
+      100
+    );
+  };
+  const rankedFacilities = useMemo(
+    () =>
+      facilities.map((facility) => ({
+        ...facility,
+        performanceScore:
+          livePerformanceScore(facility)
+      })),
+    [facilities, live, lastTick]
+  );
+
+  const topPerformers = useMemo(
+    () =>
+      rankedFacilities
+        .filter(
+          (f) => effective(f) === "Healthy"
+        )
+        .sort(
+          (a, b) =>
+            b.performanceScore -
+            a.performanceScore
+        )
+        .slice(0, 5),
+    [rankedFacilities, live, anomalies]
+  );
+
+  const bottomPerformers = useMemo(
+    () =>
+      rankedFacilities
+        .filter(
+          (f) => effective(f) !== "Healthy"
+        )
+        .sort(
+          (a, b) =>
+            a.performanceScore -
+            b.performanceScore
+        )
+        .slice(0, 5),
+    [rankedFacilities, live, anomalies]
+  );
+
   const connectionLabel =
     connection === "live"
       ? "Live"
@@ -800,7 +916,7 @@ export default function RealtimeOverview({
           <Kpi
             icon={CircleDollarSign}
             label="Total Cost"
-            value={`₹${num(totalCost, 0)}`}
+            value={`â‚¹${num(totalCost, 0)}`}
             sub="Live tariff calculation"
             tone="purple"
           />
@@ -809,7 +925,7 @@ export default function RealtimeOverview({
             icon={Leaf}
             label="Total Emissions"
             value={num(energyTotal * 0.82, 1)}
-            sub="kg CO₂e estimated from live energy"
+            sub="kg COâ‚‚e estimated from live energy"
             tone="green"
           />
         </div>
@@ -819,7 +935,7 @@ export default function RealtimeOverview({
             <PanelHead
               icon={Zap}
               title="Energy Overview"
-              sub="Actual vs expected · realtime telemetry"
+              sub="Actual vs expected Â· realtime telemetry"
               to="/energy"
             />
 
@@ -862,7 +978,7 @@ export default function RealtimeOverview({
 
                 <div>
                   <span>Estimated Savings</span>
-                  <b className="green">₹{num(energyExcess * ENERGY_TARIFF, 0)}</b>
+                  <b className="green">â‚¹{num(energyExcess * ENERGY_TARIFF, 0)}</b>
                 </div>
               </div>
             </div>
@@ -910,7 +1026,7 @@ export default function RealtimeOverview({
             <PanelHead
               icon={Droplets}
               title="Water Overview"
-              sub="Input, use and unaccounted water · realtime"
+              sub="Input, use and unaccounted water Â· realtime"
               to="/water"
             />
 
@@ -1085,7 +1201,7 @@ export default function RealtimeOverview({
                     <b>{a.anomaly_type}</b>
 
                     <span>
-                      {a.facility_code} ·{" "}
+                      {a.facility_code} Â·{" "}
                       {a.description ||
                         a.sensor_name ||
                         "Detected anomaly"}
@@ -1109,78 +1225,67 @@ export default function RealtimeOverview({
 
         <div className="lower-grid">
           <Card>
-            <PanelHead
-              icon={ShieldCheck}
-              title="Top Performing Facilities"
-              sub="Based on current live status"
-            />
+  <PanelHead
+    icon={ShieldCheck}
+    title="Top Performing Facilities"
+    sub="Ranked from current live efficiency"
+  />
 
-            {facilities
-              .filter(
-                (f) => effective(f) === "Healthy"
-              )
-              .slice(0, 5)
-              .map((f, i) => (
-                <button
-                  className="rank"
-                  key={f.facility_code}
-                  onClick={() =>
-                    nav(
-                      `/facilities/${f.facility_code}`
-                    )
-                  }
-                >
-                  <span>{i + 1}</span>
+  {rankedFacilities
+    .filter((f) => effective(f) === "Healthy")
+    .sort((a, b) => b.performanceScore - a.performanceScore)
+    .slice(0, 5)
+    .map((f, i) => (
+      <button
+        className="rank"
+        key={f.facility_code}
+        onClick={() =>
+          nav(`/facilities/${f.facility_code}`)
+        }
+      >
+        <span>{i + 1}</span>
 
-                  <div>
-                    <b>{f.facility_name}</b>
-                    <small>{f.city}</small>
-                  </div>
+        <div>
+          <b>{f.facility_name}</b>
+          <small>{f.city}</small>
+        </div>
 
-                  <strong>
-                    {Math.max(
-                      70,
-                      Math.round(95 - i * 3)
-                    )}
-                  </strong>
-                </button>
-              ))}
-          </Card>
+        <strong>
+          {Math.round(f.performanceScore)}
+        </strong>
+      </button>
+    ))}
+</Card>
 
           <Card>
             <PanelHead
               icon={AlertTriangle}
               title="Bottom Performing Facilities"
-              sub="Prioritized from live status"
+              sub="Ranked by current live efficiency"
             />
 
-            {facilities
-              .filter(
-                (f) => effective(f) !== "Healthy"
-              )
-              .slice(0, 5)
-              .map((f, i) => (
-                <button
-                  className="rank"
-                  key={f.facility_code}
-                  onClick={() =>
-                    nav(
-                      `/facilities/${f.facility_code}`
-                    )
-                  }
-                >
-                  <span>{i + 1}</span>
+            {bottomPerformers.map((f, i) => (
+              <button
+                className="rank"
+                key={f.facility_code}
+                onClick={() =>
+                  nav(
+                    `/facilities/${f.facility_code}`
+                  )
+                }
+              >
+                <span>{i + 1}</span>
 
-                  <div>
-                    <b>{f.facility_name}</b>
-                    <small>{effective(f)}</small>
-                  </div>
+                <div>
+                  <b>{f.facility_name}</b>
+                  <small>{effective(f)}</small>
+                </div>
 
-                  <strong className="red">
-                    {Math.max(35, 55 - i * 4)}
-                  </strong>
-                </button>
-              ))}
+                <strong className="red">
+                  {f.performanceScore}
+                </strong>
+              </button>
+            ))}
           </Card>
 
           <Card>
@@ -1298,7 +1403,7 @@ export default function RealtimeOverview({
                         <td>
                           <b>{f.facility_name}</b>
                           <small>
-                            {f.facility_code} ·{" "}
+                            {f.facility_code} Â·{" "}
                             {f.city}
                           </small>
                         </td>
@@ -1319,14 +1424,14 @@ export default function RealtimeOverview({
                         <td>
                           {l?.energy_kwh != null
                             ? num(l.energy_kwh)
-                            : "—"}{" "}
+                            : "â€”"}{" "}
                           kWh
                         </td>
 
                         <td>
                           {l?.water_kl != null
                             ? num(l.water_kl, 2)
-                            : "—"}{" "}
+                            : "â€”"}{" "}
                           kL
                         </td>
 
@@ -1349,7 +1454,7 @@ export default function RealtimeOverview({
                               )
                             }
                           >
-                            Open →
+                            Open â†’
                           </button>
                         </td>
                       </tr>
@@ -1389,3 +1494,7 @@ export default function RealtimeOverview({
     </div>
   );
 }
+
+
+
+

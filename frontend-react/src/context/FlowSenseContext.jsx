@@ -1,4 +1,4 @@
-import {
+﻿import {
   createContext,
   useContext,
   useEffect,
@@ -410,7 +410,7 @@ function mergeFacilityMetadata(
         city:
           existing.city ||
           telemetry.city ||
-          "—",
+          "â€”",
 
         iot_device:
           existing.iot_device ||
@@ -591,6 +591,18 @@ export function FlowSenseProvider({
                 facility.reuse_rate,
                 previous.reuse_rate ||
                   DEFAULT_REUSE_RATE
+              ),
+
+            energy_score:
+              toNumber(
+                facility.energy_score,
+                previous.energy_score || 0
+              ),
+
+            water_score:
+              toNumber(
+                facility.water_score,
+                previous.water_score || 0
               )
           };
 
@@ -885,3 +897,4 @@ export function useFlowSense() {
 
   return context;
 }
+
