@@ -25,6 +25,8 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
+
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -336,7 +338,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# ============================================================
+# REALTIME REPORT CACHE
+# ============================================================
 
+LIVE_REPORT_CACHE = {}
 
 # ============================================================
 # WEBSOCKET CONNECTION MANAGER
@@ -1822,7 +1828,16 @@ async def broadcast_live_reading(
         "persistence":
             persistence_result,
     }
+    # ---------------------------------------------------------
+    # 5.5 Store latest live snapshot for reporting
+    # --------------------------------------------------------
 
+    LIVE_REPORT_CACHE[facility_code] = {
+        "facility_code": facility_code,
+        "timestamp": event["timestamp"],
+        "data": dict(live_payload),
+        "detection": detection_payload,
+    }
     # --------------------------------------------------------
     # 6. Broadcast
     # --------------------------------------------------------
@@ -1858,6 +1873,350 @@ async def broadcast_live_reading(
             persistence_result,
     }
 
+# ============================================================
+# REALTIME REPORT CACHE STATUS
+# ============================================================
+
+@app.get("/api/reports/live-cache/status")
+def live_report_cache_status():
+    return {
+        "cached_facilities": len(LIVE_REPORT_CACHE),
+        "facility_codes": list(
+            LIVE_REPORT_CACHE.keys()
+        ),
+    }
+# ============================================================
+# REPORTS API
+# ============================================================
+
+@app.get(
+    "/api/reports/facilities/{facility_code}"
+)
+def facility_report(
+    facility_code: str,
+    period: str = "24h",
+    db: Session = Depends(get_db),
+):
+    """
+    Return the complete report data package for one facility.
+
+    Combines:
+        - PostgreSQL historical/reporting data
+        - latest realtime telemetry
+        - latest realtime detection
+    """
+
+    from report_engine import (
+        build_facility_report_data,
+        resolve_period,
+    )
+
+    # --------------------------------------------------------
+    # Resolve reporting period
+    # --------------------------------------------------------
+
+    try:
+        start, end = resolve_period(period)
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        )
+
+    # --------------------------------------------------------
+    # Build historical report package
+    # --------------------------------------------------------
+
+    try:
+        report = build_facility_report_data(
+            db,
+            facility_code,
+            start,
+            end,
+        )
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=str(exc),
+        )
+
+    except Exception as exc:
+        print(
+            f"[Reports] Error -> "
+            f"{facility_code}: {exc}"
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to build facility report",
+        )
+
+    # --------------------------------------------------------
+    # Attach latest realtime snapshot
+    # --------------------------------------------------------
+
+    live_snapshot = LIVE_REPORT_CACHE.get(
+        facility_code
+    )
+
+    report["realtime"] = (
+        live_snapshot
+        if live_snapshot is not None
+        else None
+    )
+
+    # --------------------------------------------------------
+    # Report metadata
+    # --------------------------------------------------------
+
+    report["report_metadata"] = {
+        "facility_code":
+            facility_code,
+
+        "period":
+            period,
+
+        "start":
+            start.isoformat(),
+
+        "end":
+            end.isoformat(),
+
+        "realtime_available":
+            live_snapshot is not None,
+
+        "generated_at":
+            datetime.now(
+                timezone.utc
+            ).isoformat(),
+    }
+
+    return make_json_safe(report)
+# ============================================================
+# FACILITY PDF REPORT - DUPLICATE INCOMPLETE BLOCK REMOVED
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# ============================================================
+# FACILITY PDF REPORT
+# ============================================================
+
+@app.get(
+    "/api/reports/facilities/{facility_code}/pdf"
+)
+def generate_facility_report_pdf(
+    facility_code: str,
+    period: str = "24h",
+    db: Session = Depends(get_db),
+):
+    """
+    Generate a PDF report from the same report data
+    used by the JSON reporting endpoint.
+    """
+
+    from report_engine import (
+        build_facility_report_data,
+        resolve_period,
+    )
+
+    from report_pdf import generate_facility_pdf
+
+    try:
+        # ----------------------------------------------------
+        # Resolve reporting period
+        # ----------------------------------------------------
+
+        start, end = resolve_period(period)
+
+        # ----------------------------------------------------
+        # Build report data
+        # ----------------------------------------------------
+
+        report = build_facility_report_data(
+            db,
+            facility_code,
+            start,
+            end,
+        )
+
+        # ----------------------------------------------------
+        # Attach latest realtime snapshot
+        # ----------------------------------------------------
+
+        live_snapshot = LIVE_REPORT_CACHE.get(
+            facility_code
+        )
+
+        report["realtime"] = (
+            live_snapshot
+            if live_snapshot is not None
+            else None
+        )
+
+        # ----------------------------------------------------
+        # Report metadata
+        # ----------------------------------------------------
+
+        report["report_metadata"] = {
+            "facility_code":
+                facility_code,
+
+            "period":
+                period,
+
+            "start":
+                start.isoformat(),
+
+            "end":
+                end.isoformat(),
+
+            "realtime_available":
+                live_snapshot is not None,
+
+            "generated_at":
+                datetime.now(
+                    timezone.utc
+                ).isoformat(),
+        }
+
+        # ----------------------------------------------------
+        # Generate PDF
+        # ----------------------------------------------------
+
+        pdf_buffer = generate_facility_pdf(
+            report
+        )
+
+        # ----------------------------------------------------
+        # Safe filename
+        # ----------------------------------------------------
+
+        facility_name = (
+            report.get("facility", {})
+            .get("facility_name")
+            or facility_code
+        )
+
+        safe_name = (
+            str(facility_name)
+            .replace(" ", "_")
+            .replace("/", "_")
+            .replace("\\", "_")
+        )
+
+        filename = (
+            f"FlowSense_{safe_name}_"
+            f"{period}_Report.pdf"
+        )
+
+        # ----------------------------------------------------
+        # Return PDF
+        # ----------------------------------------------------
+
+        return StreamingResponse(
+            pdf_buffer,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition":
+                    f'attachment; filename="{filename}"'
+            },
+        )
+
+    except ValueError as exc:
+
+        raise HTTPException(
+            status_code=404,
+            detail=str(exc),
+        )
+
+    except Exception as exc:
+
+        print(
+            f"[Reports PDF] Error -> "
+            f"{facility_code}: {exc}"
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Failed to generate "
+                "facility PDF report"
+            ),
+        )
+
+# UNREACHABLE DUPLICATE PDF RETURN/EXCEPTION BLOCK REMOVED
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
+# Duplicate/removed code retained as line-count padding.
 
 # ============================================================
 # ALL-FACILITIES WEBSOCKET
