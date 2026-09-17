@@ -14,6 +14,7 @@ Stage 3:
 """
 
 import asyncio
+from ollama_service import generate_report_analysis
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -2181,6 +2182,52 @@ def generate_facility_report_pdf(
                 "Failed to generate "
                 "facility PDF report"
             ),
+        )
+@app.post("/api/reports/facilities/{facility_code}/ai-analysis")
+def facility_report_ai_analysis(
+    facility_code: str,
+    period: str = "24h",
+    db: Session = Depends(get_db),
+):
+    from report_engine import (
+        build_facility_report_data,
+        resolve_period,
+    )
+
+    try:
+        start, end = resolve_period(period)
+
+        report = build_facility_report_data(
+            db,
+            facility_code,
+            start,
+            end,
+        )
+
+        if not report:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Facility {facility_code} not found",
+            )
+
+        ai_result = generate_report_analysis(report)
+
+        return {
+            "facility_code": facility_code,
+            "period": period,
+            "success": ai_result.get("success", False),
+            "model": ai_result.get("model"),
+            "analysis": ai_result.get("analysis"),
+            "error": ai_result.get("error"),
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"AI report analysis failed: {exc}",
         )
 
 # UNREACHABLE DUPLICATE PDF RETURN/EXCEPTION BLOCK REMOVED
