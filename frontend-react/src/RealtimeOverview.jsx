@@ -303,7 +303,7 @@ export default function RealtimeOverview({
         ].slice(-60);
       });
     }
-  }, [live, selected, liveValues, lastTick, isPortfolio]);
+  }, [live, selected, lastTick, isPortfolio]);
 
   const selectedLive = isPortfolio ? null : live[selected];
 
@@ -916,7 +916,7 @@ export default function RealtimeOverview({
           <Kpi
             icon={CircleDollarSign}
             label="Total Cost"
-            value={`â‚¹${num(totalCost, 0)}`}
+            value={`₹${num(totalCost, 0)}`}
             sub="Live tariff calculation"
             tone="purple"
           />
@@ -978,13 +978,13 @@ export default function RealtimeOverview({
 
                 <div>
                   <span>Estimated Savings</span>
-                  <b className="green">â‚¹{num(energyExcess * ENERGY_TARIFF, 0)}</b>
+                  <b className="green">₹{num(energyExcess * ENERGY_TARIFF, 0)}</b>
                 </div>
               </div>
             </div>
 
             <div className="chart">
-              <ResponsiveContainer>
+              <ResponsiveContainer width="100%" height={300}>
                 <AreaChart data={eChart}>
                   <CartesianGrid
                     stroke="#1c2d43"
@@ -1076,7 +1076,7 @@ export default function RealtimeOverview({
             </div>
 
             <div className="chart">
-              <ResponsiveContainer>
+              <ResponsiveContainer width="100%" height={300}>
                 <LineChart data={wChart}>
                   <CartesianGrid
                     stroke="#1c2d43"

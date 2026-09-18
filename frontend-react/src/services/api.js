@@ -31,6 +31,56 @@ const get = async (path, options = {}) => {
   }
 };
 
+const post = async (path, options = {}) => {
+  const controller = new AbortController();
+
+  const timeout = setTimeout(() => {
+    controller.abort();
+  }, options.timeout ?? 90000);
+
+  try {
+    const response = await fetch(`${BASE}${path}`, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json"
+      },
+      signal: controller.signal,
+      cache: "no-store",
+      body: options.body
+        ? JSON.stringify(options.body)
+        : undefined
+    });
+
+    if (!response.ok) {
+      let detail = "";
+
+      try {
+        const data = await response.json();
+
+        detail =
+          data?.detail ||
+          data?.error ||
+          "";
+      } catch {
+        // Ignore non-JSON error responses.
+      }
+
+      throw new Error(
+        `${response.status} ${
+          response.statusText
+        } ${path}${
+          detail ? ` — ${detail}` : ""
+        }`
+      );
+    }
+
+    return await response.json();
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
 const encode = (value) =>
   encodeURIComponent(String(value));
 
@@ -76,8 +126,7 @@ export const api = {
       )}/water?hours=${Math.max(
         1,
         Number(hours) || 24
-      )}`
-    ),
+      )}`),
 
   reconciliation: (
     facilityCode,
@@ -98,6 +147,42 @@ export const api = {
         facilityCode
       )}/yearly-summary`
     ),
+
+  /*
+   * Reports
+   */
+  facilityReport: (
+    facilityCode,
+    period = "24h"
+  ) =>
+    get(
+      `/api/reports/facilities/${encode(
+        facilityCode
+      )}?period=${encode(period)}`
+    ),
+
+  aiReportAnalysis: (
+    facilityCode,
+    period = "24h"
+  ) =>
+    post(
+      `/api/reports/facilities/${encode(
+        facilityCode
+      )}/ai-analysis?period=${encode(
+        period
+      )}`,
+      {
+        timeout: 90000
+      }
+    ),
+
+  reportPdfUrl: (
+    facilityCode,
+    period = "24h"
+  ) =>
+    `${BASE}/api/reports/facilities/${encode(
+      facilityCode
+    )}/pdf?period=${encode(period)}`,
 
   /*
    * Portfolio historical data
@@ -139,8 +224,6 @@ export const API_BASE_URL = BASE;
 
 /*
  * Lightweight health check.
- * Useful for Settings / Devices without
- * loading portfolio data.
  */
 export const health = async () => {
   try {

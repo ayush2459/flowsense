@@ -7,11 +7,9 @@ import "./index.css";
 import "./App.css";
 
 ReactDOM.createRoot(document.getElementById("root")).render(
-  <React.StrictMode>
-    <BrowserRouter>
-      <FlowSenseProvider>
-        <App />
-      </FlowSenseProvider>
-    </BrowserRouter>
-  </React.StrictMode>
+  <BrowserRouter>
+    <FlowSenseProvider>
+      <App />
+    </FlowSenseProvider>
+  </BrowserRouter>
 );

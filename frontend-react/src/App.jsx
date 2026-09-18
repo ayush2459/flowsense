@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import {
   BrowserRouter,
   Routes,
@@ -21,6 +21,8 @@ import {
   Settings,
   Gauge,
   ShieldCheck,
+  ShieldAlert,
+  Thermometer,
   AlertTriangle,
   Leaf,
   RefreshCw,
@@ -77,7 +79,7 @@ const fmtTime = (v) =>
         hour: "2-digit",
         minute: "2-digit"
       })
-    : "—";
+    : "â€”";
 
 function getStatus(facility, anomalies) {
   const rows = anomalies.filter(
@@ -125,6 +127,21 @@ function Kpi({
   );
 }
 
+function MetricItem({ label, value }) {
+  return (
+    <div className="reports-metric-item">
+      <span className="reports-metric-label">
+        {label}
+      </span>
+
+      <span className="reports-metric-value">
+        {value}
+      </span>
+    </div>
+  );
+}
+
+
 function PanelHead({ icon: Icon, title, sub, to }) {
   const navigate = useNavigate();
 
@@ -145,7 +162,7 @@ function PanelHead({ icon: Icon, title, sub, to }) {
           className="link"
           onClick={() => navigate(to)}
         >
-          View Details →
+          View Details â†’
         </button>
       )}
     </div>
@@ -595,7 +612,7 @@ function Overview({
             </div>
 
             <div className="chart">
-              <ResponsiveContainer>
+              <ResponsiveContainer width="100%" height={300}>
                 <AreaChart
                   data={energyChart}
                 >
@@ -677,7 +694,7 @@ function Overview({
             </div>
 
             <div className="chart">
-              <ResponsiveContainer>
+              <ResponsiveContainer width="100%" height={300}>
                 <LineChart
                   data={waterChart}
                 >
@@ -792,7 +809,7 @@ function Overview({
                       </b>
 
                       <span>
-                        {a.facility_code} ·{" "}
+                        {a.facility_code} Â·{" "}
                         {a.description ||
                           a.sensor_name ||
                           "Detected anomaly"}
@@ -936,7 +953,7 @@ function Facilities({
                         )
                       }
                     >
-                      Open →
+                      Open â†’
                     </button>
                   </td>
                 </tr>
@@ -1208,7 +1225,7 @@ function Resource({
                 key={facility.facility_code}
                 value={facility.facility_code}
               >
-                {facility.facility_name} ·{" "}
+                {facility.facility_name} Â·{" "}
                 {facility.facility_code}
               </option>
             ))}
@@ -1223,8 +1240,8 @@ function Resource({
           }`}
         >
           {connection === "live"
-            ? "● Live"
-            : "● Reconnecting"}
+            ? "â— Live"
+            : "â— Reconnecting"}
         </span>
       </div>
 
@@ -1339,7 +1356,7 @@ function Resource({
               {selectedFacility
                 ? selectedFacility.facility_name
                 : "All facilities"}{" "}
-              · live WebSocket history
+              Â· live WebSocket history
             </p>
           </div>
 
@@ -1351,7 +1368,7 @@ function Resource({
         </div>
 
         <div className="chart">
-          <ResponsiveContainer>
+          <ResponsiveContainer width="100%" height={300}>
             <LineChart data={chartData}>
               <CartesianGrid
                 stroke="#1c2d43"
@@ -1666,7 +1683,7 @@ function Alerts({ anomalies }) {
                       ? new Date(
                           a.detected_at
                         ).toLocaleString()
-                      : "—"}
+                      : "â€”"}
                   </td>
 
                   <td>
@@ -1679,7 +1696,7 @@ function Alerts({ anomalies }) {
                         )
                       }
                     >
-                      Investigate →
+                      Investigate â†’
                     </button>
                   </td>
                 </tr>
@@ -1780,7 +1797,7 @@ function Detail({
   return (
     <Page
       title={facility.facility_name}
-      sub={`${facility.facility_code} · ${facility.city}, ${facility.state}`}
+      sub={`${facility.facility_code} Â· ${facility.city}, ${facility.state}`}
     >
       <div className="detail-grid">
         <Kpi
@@ -1916,16 +1933,16 @@ function Analytics({ facilities }) {
     getHistory
   } = useFlowSense();
 
-  const [selectedFacility, setSelectedFacility] =
+ const [selectedFacility, setSelectedFacility] =
     useState("all");
 
-  const [range, setRange] =
+ const [range, setRange] =
     useState("24h");
 
-  const [view, setView] =
+ const [view, setView] =
     useState("energy");
 
-  const liveFacilities =
+ const liveFacilities =
     facilityList?.length
       ? facilityList
       : facilities || [];
@@ -2858,39 +2875,971 @@ function AIInsights({
 }
 
 function Reports() {
+  const {
+    facilityList,
+    connection,
+    lastTick
+  } = useFlowSense();
+
+  const [selectedFacility, setSelectedFacility] =
+    useState("all");
+  const [aiAnalysis, setAiAnalysis] =
+    useState(null);
+  const [aiLoading, setAiLoading] =
+    useState(false);
+  const [aiError, setAiError] =
+    useState("");
+  const [facilityQuery, setFacilityQuery] =
+    useState("");
+
+  const isLive =
+    connection === "live" ||
+    connection === "connected";
+
+  const selected =
+    selectedFacility !== "all"
+      ? facilityList.find(
+          (item) =>
+            item.facility_code === selectedFacility
+        )
+      : null;
+
+  useEffect(() => {
+    if (
+      selectedFacility !== "all" &&
+      !facilityList.some(
+        (item) =>
+          item.facility_code === selectedFacility
+      )
+    ) {
+      setSelectedFacility("all");
+      setAiAnalysis(null);
+    }
+  }, [facilityList, selectedFacility]);
+
+  useEffect(() => {
+    setAiAnalysis(null);
+    setAiError("");
+  }, [selectedFacility]);
+
+  const reportFacilities =
+    selected ? [selected] : facilityList;
+
+  const sum = (key) =>
+    reportFacilities.reduce(
+      (total, item) =>
+        total + (Number(item?.[key]) || 0),
+      0
+    );
+
+  const average = (key) =>
+    reportFacilities.length
+      ? sum(key) / reportFacilities.length
+      : 0;
+
+  const energy = sum("energy_kwh");
+  const expectedEnergy = sum("expected_energy_kwh");
+  const water = sum("water_kl");
+  const expectedWater = sum("expected_water_kl");
+  const power = sum("power_kw");
+  const flow = sum("water_flow_lpm");
+  const anomalyCount = reportFacilities.reduce(
+    (total, item) =>
+      total + (Number(item?.anomaly_count) || 0),
+    0
+  );
+
+  const energyScore = average("energy_score");
+  const waterScore = average("water_score");
+
+  const energyVariance =
+    expectedEnergy > 0
+      ? ((energy - expectedEnergy) / expectedEnergy) * 100
+      : 0;
+
+  const waterVariance =
+    expectedWater > 0
+      ? ((water - expectedWater) / expectedWater) * 100
+      : 0;
+
+  const getLiveStatus = (item) => {
+    const value = String(
+      item?.facility_status ||
+        item?.telemetry_status ||
+        "healthy"
+    ).toLowerCase();
+
+    if (
+      value.includes("critical") ||
+      value.includes("danger")
+    ) {
+      return "Critical";
+    }
+
+    if (
+      value.includes("attention") ||
+      value.includes("warning") ||
+      value.includes("anomaly")
+    ) {
+      return "Attention";
+    }
+
+    return "Healthy";
+  };
+
+  const statusCounts = reportFacilities.reduce(
+    (counts, item) => {
+      const value = getLiveStatus(item);
+      counts[value] += 1;
+      return counts;
+    },
+    {
+      Healthy: 0,
+      Attention: 0,
+      Critical: 0
+    }
+  );
+
+  const filteredFacilities = facilityList.filter(
+    (item) => {
+      const q = facilityQuery.trim().toLowerCase();
+
+      if (!q) return true;
+
+      return `${item.facility_name || ""} ${
+        item.facility_code || ""
+      } ${item.city || ""} ${item.state || ""}`
+        .toLowerCase()
+        .includes(q);
+    }
+  );
+
+  const updatedAt =
+    selected?.timestamp || lastTick;
+
+  const handleGenerateAI = async () => {
+    if (!selected) return;
+
+    setAiLoading(true);
+    setAiError("");
+    setAiAnalysis(null);
+
+    try {
+      const response =
+        await api.aiReportAnalysis(
+          selected.facility_code,
+          "24h"
+        );
+
+      if (
+        response?.success === false ||
+        response?.error
+      ) {
+        throw new Error(
+          response.error ||
+            "AI analysis failed"
+        );
+      }
+
+      setAiAnalysis(
+        response.analysis || response
+      );
+    } catch (error) {
+      console.error(
+        "AI report analysis failed:",
+        error
+      );
+
+      setAiError(
+        error?.message ||
+          "Unable to generate AI analysis."
+      );
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const downloadPdf = () => {
+    if (!selected) return;
+
+    window.open(
+      api.reportPdfUrl(
+        selected.facility_code,
+        "24h"
+      ),
+      "_blank",
+      "noopener,noreferrer"
+    );
+  };
+
+  if (!facilityList.length) {
+    return (
+      <Page
+        title="Reports"
+        sub="Realtime operational intelligence and resource performance"
+      >
+        <Card className="reports-empty">
+          <Activity />
+          <strong>
+            Waiting for realtime facility telemetry
+          </strong>
+          <span>
+            The report workspace will appear as soon
+            as the facility stream is available.
+          </span>
+        </Card>
+      </Page>
+    );
+  }
+
   return (
     <Page
       title="Reports"
-      sub="Operational and resource reporting"
+      sub="Realtime operational intelligence and resource performance"
     >
-      <div className="workspace-grid">
-        <Card>
-          <PanelHead
-            icon={FileText}
-            title="Resource Report"
-            sub="Energy and water performance"
-          />
+      <div className="reports-page">
+        <div className="reports-toolbar">
+          <div className="reports-toolbar-left">
+            <div className="reports-live-status">
+              <span
+                className={`live-dot ${
+                  isLive ? "active" : ""
+                }`}
+              />
+              {isLive ? "LIVE" : "RECONNECTING"}
+            </div>
 
-          <p className="workspace-copy">
-            Use the Energy, Water and Facility
-            pages to review the underlying
-            realtime and historical data.
-          </p>
-        </Card>
+            <div className="reports-updated">
+              {updatedAt
+                ? `Updated ${new Date(
+                    updatedAt
+                  ).toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    second: "2-digit"
+                  })}`
+                : "Waiting for telemetry"}
+            </div>
+          </div>
 
-        <Card>
-          <PanelHead
-            icon={ShieldCheck}
-            title="Operational Report"
-            sub="Anomalies and facility health"
-          />
+          <div className="reports-toolbar-actions">
+            <div className="reports-select-wrap">
+              <Building2 />
+              <select
+                className="reports-facility-select"
+                value={selectedFacility}
+                onChange={(event) =>
+                  setSelectedFacility(
+                    event.target.value
+                  )
+                }
+              >
+                <option value="all">
+                  All Facilities · {facilityList.length}
+                </option>
 
-          <p className="workspace-copy">
-            Review current facility status and
-            detected anomalies from the Alerts
-            workspace.
-          </p>
-        </Card>
+                {facilityList.map((item) => (
+                  <option
+                    key={item.facility_code}
+                    value={item.facility_code}
+                  >
+                    {item.facility_name ||
+                      item.facility_code}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown />
+            </div>
+
+            <button
+              type="button"
+              className="reports-pdf-button"
+              disabled={!selected}
+              onClick={downloadPdf}
+              title={
+                selected
+                  ? "Download the selected facility PDF report"
+                  : "Select a facility to download its report"
+              }
+            >
+              <FileText />
+              Download PDF
+            </button>
+          </div>
+        </div>
+
+        {selected ? (
+          <>
+            <div className="reports-facility-header">
+              <div>
+                <div className="reports-facility-name">
+                  {selected.facility_name ||
+                    selected.facility_code}
+                </div>
+
+                <div className="reports-facility-meta">
+                  {selected.facility_code}
+                  {selected.city
+                    ? ` • ${selected.city}`
+                    : ""}
+                  {selected.state
+                    ? `, ${selected.state}`
+                    : ""}
+                </div>
+              </div>
+
+              <div
+                className={`reports-status ${getLiveStatus(
+                  selected
+                ).toLowerCase()}`}
+              >
+                <span />
+                {getLiveStatus(selected)}
+              </div>
+            </div>
+
+            <div className="reports-kpi-grid">
+              <Card>
+                <PanelHead
+                  icon={Zap}
+                  title="Energy"
+                  sub="Latest realtime consumption"
+                />
+                <div className="reports-kpi-value">
+                  {num(energy, 2)}
+                  <span> kWh</span>
+                </div>
+                <div className="reports-kpi-detail">
+                  Expected {num(expectedEnergy, 2)} kWh
+                </div>
+                <div
+                  className={`reports-kpi-variance ${
+                    energyVariance > 0
+                      ? "negative"
+                      : "positive"
+                  }`}
+                >
+                  {energyVariance >= 0 ? "+" : ""}
+                  {energyVariance.toFixed(1)}% vs baseline
+                </div>
+              </Card>
+
+              <Card>
+                <PanelHead
+                  icon={Droplets}
+                  title="Water"
+                  sub="Latest realtime consumption"
+                />
+                <div className="reports-kpi-value">
+                  {num(water, 2)}
+                  <span> kL</span>
+                </div>
+                <div className="reports-kpi-detail">
+                  Expected {num(expectedWater, 2)} kL
+                </div>
+                <div
+                  className={`reports-kpi-variance ${
+                    waterVariance > 0
+                      ? "negative"
+                      : "positive"
+                  }`}
+                >
+                  {waterVariance >= 0 ? "+" : ""}
+                  {waterVariance.toFixed(1)}% vs baseline
+                </div>
+              </Card>
+
+              <Card>
+                <PanelHead
+                  icon={Gauge}
+                  title="Efficiency"
+                  sub="Current performance"
+                />
+                <div className="reports-kpi-value">
+                  {num(energyScore, 1)}
+                  <span>%</span>
+                </div>
+                <div className="reports-kpi-detail">
+                  Water efficiency {num(waterScore, 1)}%
+                </div>
+              </Card>
+
+              <Card>
+                <PanelHead
+                  icon={ShieldAlert}
+                  title="Detection"
+                  sub="Realtime intelligence"
+                />
+                <div className="reports-kpi-value">
+                  {anomalyCount}
+                </div>
+                <div className="reports-kpi-detail">
+                  {selected.primary_anomaly?.anomaly_type ||
+                    selected.primary_anomaly?.type ||
+                    (selected.leak_detected
+                      ? "Leak detected"
+                      : "No active anomaly")}
+                </div>
+              </Card>
+            </div>
+
+            <div className="reports-section-grid">
+              <Card>
+                <PanelHead
+                  icon={Zap}
+                  title="Energy Performance"
+                  sub="Live operating conditions"
+                />
+                <div className="reports-metric-list">
+                  <MetricItem
+                    label="Power demand"
+                    value={`${num(selected.power_kw, 2)} kW`}
+                  />
+                  <MetricItem
+                    label="Energy efficiency"
+                    value={`${num(selected.energy_score, 1)}%`}
+                  />
+                  <MetricItem
+                    label="Estimated energy loss"
+                    value={`${num(selected.estimated_energy_loss_kwh, 2)} kWh`}
+                  />
+                  <MetricItem
+                    label="Voltage"
+                    value={`${num(selected.voltage, 1)} V`}
+                  />
+                  <MetricItem
+                    label="Current"
+                    value={`${num(selected.current, 2)} A`}
+                  />
+                </div>
+              </Card>
+
+              <Card>
+                <PanelHead
+                  icon={Droplets}
+                  title="Water Performance"
+                  sub="Live operating conditions"
+                />
+                <div className="reports-metric-list">
+                  <MetricItem
+                    label="Flow"
+                    value={`${num(selected.water_flow_lpm, 2)} L/min`}
+                  />
+                  <MetricItem
+                    label="Pressure"
+                    value={`${num(selected.water_pressure_bar, 2)} bar`}
+                  />
+                  <MetricItem
+                    label="Water efficiency"
+                    value={`${num(selected.water_score, 1)}%`}
+                  />
+                  <MetricItem
+                    label="Estimated water loss"
+                    value={`${num(selected.estimated_water_loss_kl, 2)} kL`}
+                  />
+                  <MetricItem
+                    label="Leak status"
+                    value={
+                      selected.leak_detected
+                        ? "Leak detected"
+                        : "No leak detected"
+                    }
+                  />
+                </div>
+              </Card>
+            </div>
+
+            <div className="reports-section-grid">
+              <Card>
+                <PanelHead
+                  icon={Thermometer}
+                  title="Environmental & Equipment"
+                  sub="Realtime sensor conditions"
+                />
+                <div className="reports-metric-list">
+                  <MetricItem
+                    label="Temperature"
+                    value={`${num(selected.temperature, 1)} °C`}
+                  />
+                  <MetricItem
+                    label="Humidity"
+                    value={`${num(selected.humidity, 1)}%`}
+                  />
+                  <MetricItem
+                    label="Vibration"
+                    value={`${num(selected.vibration, 2)}`}
+                  />
+                  <MetricItem
+                    label="Treatment rate"
+                    value={`${num(selected.treatment_rate, 1)}%`}
+                  />
+                  <MetricItem
+                    label="Reuse rate"
+                    value={`${num(selected.reuse_rate, 1)}%`}
+                  />
+                </div>
+              </Card>
+
+              <Card>
+                <PanelHead
+                  icon={ShieldAlert}
+                  title="Intelligent Detection"
+                  sub="Realtime anomaly evidence"
+                />
+
+                {selected.primary_anomaly ? (
+                  <div className="reports-anomaly">
+                    <div className="reports-anomaly-title">
+                      {selected.primary_anomaly.anomaly_type ||
+                        selected.primary_anomaly.type ||
+                        "Realtime anomaly"}
+                    </div>
+
+                    <div className="reports-metric-list">
+                      <MetricItem
+                        label="Severity"
+                        value={
+                          selected.primary_anomaly.severity ||
+                          "Warning"
+                        }
+                      />
+                      <MetricItem
+                        label="Source"
+                        value={
+                          selected.primary_anomaly.likely_source ||
+                          selected.primary_anomaly.source_name ||
+                          "Realtime IoT"
+                        }
+                      />
+                      <MetricItem
+                        label="Area"
+                        value={
+                          selected.primary_anomaly.area ||
+                          selected.primary_anomaly.location ||
+                          "Detected facility area"
+                        }
+                      />
+                      <MetricItem
+                        label="Confidence"
+                        value={
+                          selected.primary_anomaly.confidence != null
+                            ? `${num(
+                                selected.primary_anomaly.confidence,
+                                1
+                              )}%`
+                            : "Available in detection data"
+                        }
+                      />
+                    </div>
+
+                    <p className="reports-anomaly-description">
+                      {selected.primary_anomaly.description ||
+                        "Realtime telemetry indicates an abnormal operating condition."}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="reports-no-anomaly">
+                    <ShieldCheck />
+                    <div>
+                      <strong>No active realtime anomaly</strong>
+                      <span>
+                        Current detection signals do not report
+                        an active issue.
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </Card>
+            </div>
+
+            <Card className="reports-ai-card">
+              <PanelHead
+                icon={Sparkles}
+                title="Ollama AI Analysis"
+                sub="Evidence-based analysis of the latest realtime facility signals"
+              />
+
+              <div className="reports-ai-panel">
+                <div className="reports-ai-intro">
+                  <div className="reports-ai-title">
+                    Generate facility intelligence
+                  </div>
+                  <p>
+                    Ollama analyzes the latest realtime energy,
+                    water, environmental and detection evidence.
+                    Historical records are supplementary only.
+                  </p>
+                  <span className="reports-ai-model">
+                    Local model · llama3.2:3b
+                  </span>
+                </div>
+
+                <button
+                  type="button"
+                  className="reports-ai-button"
+                  disabled={aiLoading || !isLive}
+                  onClick={handleGenerateAI}
+                >
+                  <Sparkles />
+                  {aiLoading
+                    ? "Analyzing live signals..."
+                    : "Generate Analysis"}
+                </button>
+              </div>
+
+              {aiError && (
+                <div className="reports-ai-error">
+                  <AlertTriangle />
+                  {aiError}
+                </div>
+              )}
+
+              {aiAnalysis && (
+                <div className="reports-ai-result">
+                  <div className="reports-ai-summary">
+                    <div className="reports-ai-result-label">
+                      AI Summary
+                    </div>
+                    <div className="reports-ai-result-summary">
+                      {aiAnalysis.summary}
+                    </div>
+                  </div>
+
+                  {Array.isArray(
+                    aiAnalysis.key_findings
+                  ) &&
+                    aiAnalysis.key_findings.length > 0 && (
+                      <div className="reports-ai-block">
+                        <div className="reports-ai-result-label">
+                          Key Findings
+                        </div>
+                        <ul>
+                          {aiAnalysis.key_findings.map(
+                            (finding, index) => (
+                              <li key={index}>
+                                {finding}
+                              </li>
+                            )
+                          )}
+                        </ul>
+                      </div>
+                    )}
+
+                  <div className="reports-ai-analysis-grid">
+                    <div className="reports-ai-block">
+                      <div className="reports-ai-result-label">
+                        Energy Analysis
+                      </div>
+                      <p>
+                        {aiAnalysis.energy_analysis ||
+                          "No energy analysis available."}
+                      </p>
+                    </div>
+
+                    <div className="reports-ai-block">
+                      <div className="reports-ai-result-label">
+                        Water Analysis
+                      </div>
+                      <p>
+                        {aiAnalysis.water_analysis ||
+                          "No water analysis available."}
+                      </p>
+                    </div>
+                  </div>
+
+                  {Array.isArray(
+                    aiAnalysis.recommendations
+                  ) &&
+                    aiAnalysis.recommendations.length > 0 && (
+                      <div className="reports-ai-block">
+                        <div className="reports-ai-result-label">
+                          Recommendations
+                        </div>
+                        <ul>
+                          {aiAnalysis.recommendations.map(
+                            (item, index) => (
+                              <li key={index}>
+                                {item}
+                              </li>
+                            )
+                          )}
+                        </ul>
+                      </div>
+                    )}
+
+                  {Array.isArray(
+                    aiAnalysis.priority_actions
+                  ) &&
+                    aiAnalysis.priority_actions.length > 0 && (
+                      <div className="reports-ai-priority">
+                        <div className="reports-ai-result-label">
+                          Priority Actions
+                        </div>
+                        {aiAnalysis.priority_actions.map(
+                          (item, index) => (
+                            <div
+                              className="reports-ai-priority-item"
+                              key={index}
+                            >
+                              <span>{index + 1}</span>
+                              {item}
+                            </div>
+                          )
+                        )}
+                      </div>
+                    )}
+                </div>
+              )}
+            </Card>
+          </>
+        ) : (
+          <>
+            <div className="reports-portfolio-hero">
+              <div>
+                <div className="reports-eyebrow">
+                  PORTFOLIO LIVE SNAPSHOT
+                </div>
+                <h2>
+                  All {facilityList.length} Facilities
+                </h2>
+                <p>
+                  Live resource performance across the
+                  complete FlowSense facility network.
+                </p>
+              </div>
+
+              <div className="reports-portfolio-status">
+                <span className="live-dot active" />
+                <strong>Realtime stream active</strong>
+                <small>
+                  {statusCounts.Healthy} healthy ·{" "}
+                  {statusCounts.Attention} attention ·{" "}
+                  {statusCounts.Critical} critical
+                </small>
+              </div>
+            </div>
+
+            <div className="reports-kpi-grid">
+              <Card>
+                <PanelHead
+                  icon={Building2}
+                  title="Facilities"
+                  sub="Connected portfolio"
+                />
+                <div className="reports-kpi-value">
+                  {facilityList.length}
+                </div>
+                <div className="reports-kpi-detail">
+                  {statusCounts.Healthy} currently healthy
+                </div>
+              </Card>
+
+              <Card>
+                <PanelHead
+                  icon={Zap}
+                  title="Energy"
+                  sub="Live portfolio total"
+                />
+                <div className="reports-kpi-value">
+                  {num(energy, 1)}
+                  <span> kWh</span>
+                </div>
+                <div className="reports-kpi-detail">
+                  Expected {num(expectedEnergy, 1)} kWh
+                </div>
+              </Card>
+
+              <Card>
+                <PanelHead
+                  icon={Droplets}
+                  title="Water"
+                  sub="Live portfolio total"
+                />
+                <div className="reports-kpi-value">
+                  {num(water, 1)}
+                  <span> kL</span>
+                </div>
+                <div className="reports-kpi-detail">
+                  Expected {num(expectedWater, 1)} kL
+                </div>
+              </Card>
+
+              <Card>
+                <PanelHead
+                  icon={ShieldAlert}
+                  title="Detection"
+                  sub="Live anomaly context"
+                />
+                <div className="reports-kpi-value">
+                  {anomalyCount}
+                </div>
+                <div className="reports-kpi-detail">
+                  {statusCounts.Attention +
+                    statusCounts.Critical} facilities need review
+                </div>
+              </Card>
+            </div>
+
+            <Card className="reports-portfolio-table-card">
+              <div className="reports-table-toolbar">
+                <div>
+                  <h2>
+                    <Building2 />
+                    All Facility Live Readings
+                  </h2>
+                  <p>
+                    Select any facility to open its detailed
+                    report and generate an Ollama analysis.
+                  </p>
+                </div>
+
+                <div className="search reports-search">
+                  <Search />
+                  <input
+                    value={facilityQuery}
+                    onChange={(event) =>
+                      setFacilityQuery(
+                        event.target.value
+                      )
+                    }
+                    placeholder="Search facilities..."
+                  />
+                </div>
+              </div>
+
+              <div className="reports-table-wrap">
+                <table className="reports-live-table">
+                  <thead>
+                    <tr>
+                      <th>Facility</th>
+                      <th>Status</th>
+                      <th>Energy</th>
+                      <th>Water</th>
+                      <th>Power</th>
+                      <th>Flow</th>
+                      <th>Efficiency</th>
+                      <th>Alerts</th>
+                      <th />
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {filteredFacilities.map(
+                      (item) => (
+                        <tr
+                          key={item.facility_code}
+                        >
+                          <td>
+                            <b>
+                              {item.facility_name ||
+                                item.facility_code}
+                            </b>
+                            <small>
+                              {item.facility_code}
+                              {item.city
+                                ? ` · ${item.city}`
+                                : ""}
+                            </small>
+                          </td>
+
+                          <td>
+                            <span
+                              className={`reports-table-status ${getLiveStatus(
+                                item
+                              ).toLowerCase()}`}
+                            >
+                              <span />
+                              {getLiveStatus(item)}
+                            </span>
+                          </td>
+
+                          <td>
+                            {num(
+                              item.energy_kwh,
+                              1
+                            )}{" "}
+                            kWh
+                          </td>
+
+                          <td>
+                            {num(
+                              item.water_kl,
+                              1
+                            )}{" "}
+                            kL
+                          </td>
+
+                          <td>
+                            {num(
+                              item.power_kw,
+                              1
+                            )}{" "}
+                            kW
+                          </td>
+
+                          <td>
+                            {num(
+                              item.water_flow_lpm,
+                              1
+                            )}{" "}
+                            L/min
+                          </td>
+
+                          <td>
+                            {num(
+                              item.energy_score,
+                              1
+                            )}%
+                          </td>
+
+                          <td>
+                            {Number(
+                              item.anomaly_count
+                            ) || 0}
+                          </td>
+
+                          <td>
+                            <button
+                              type="button"
+                              className="reports-open-button"
+                              onClick={() =>
+                                setSelectedFacility(
+                                  item.facility_code
+                                )
+                              }
+                            >
+                              Open →
+                            </button>
+                          </td>
+                        </tr>
+                      )
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {!filteredFacilities.length && (
+                <div className="no-results">
+                  No facilities match your search.
+                </div>
+              )}
+            </Card>
+
+            <Card className="reports-portfolio-note">
+              <ShieldCheck />
+              <div>
+                <strong>
+                  Facility reports are generated from live
+                  telemetry
+                </strong>
+                <span>
+                  Choose a facility above to access its PDF
+                  report and evidence-based Ollama analysis.
+                </span>
+              </div>
+            </Card>
+          </>
+        )}
       </div>
     </Page>
   );
@@ -3128,3 +4077,5 @@ function App() {
 }
 
 export default App;
+
+

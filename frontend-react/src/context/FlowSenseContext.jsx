@@ -105,19 +105,10 @@ function calculateWaterLoss(data, detection, expectedWater) {
     waterConsumption - expectedConsumption
   );
 }
+
 function normalizeMessage(message) {
   const data = message?.data || {};
   const detection = message?.detection || {};
-
-  const expectedEnergy = toNumber(
-    data.expected_energy_kwh,
-    DEFAULT_EXPECTED_ENERGY
-  );
-
-  const expectedWater = toNumber(
-    data.expected_water_kl,
-    DEFAULT_EXPECTED_WATER
-  );
 
   const anomalies = Array.isArray(detection.anomalies)
     ? detection.anomalies
@@ -126,28 +117,175 @@ function normalizeMessage(message) {
   const primaryAnomaly =
     detection.primary_anomaly || null;
 
-  const rawStatus =
-    detection.facility_status ||
-    data.status ||
-    (Boolean(data.anomaly) ||
-    anomalies.length ||
-    primaryAnomaly
-      ? "attention"
-      : "healthy");
+  const toNumber = (value, fallback = 0) => {
+    const number = Number(value);
+    return Number.isFinite(number)
+      ? number
+      : fallback;
+  };
 
-  const energy = toNumber(data.energy_kwh);
-  const water = toNumber(data.water_kl);
+  const firstDefined = (...values) => {
+    for (const value of values) {
+      if (
+        value !== undefined &&
+        value !== null &&
+        value !== ""
+      ) {
+        return value;
+      }
+    }
+
+    return undefined;
+  };
+
+  const expectedEnergy = toNumber(
+    firstDefined(
+      data.expected_energy_kwh,
+      detection.expected_energy_kwh,
+      320
+    )
+  );
+
+  const expectedWater = toNumber(
+    firstDefined(
+      data.expected_water_kl,
+      detection.expected_water_kl,
+      30
+    )
+  );
+
+  const energy = toNumber(
+    firstDefined(
+      data.energy_kwh,
+      data.energy,
+      data.energy_consumption
+    )
+  );
+
+  const water = toNumber(
+    firstDefined(
+      data.water_kl,
+      data.water,
+      data.water_consumption
+    )
+  );
 
   const power = toNumber(
-    data.power_kw ??
-      data.power ??
+    firstDefined(
+      data.power_kw,
+      data.power,
       data.demand_kw
+    )
+  );
+
+  const voltage = toNumber(
+    firstDefined(
+      data.voltage_v,
+      data.voltage,
+      data.voltage_volts
+    )
+  );
+
+  const current = toNumber(
+    firstDefined(
+      data.current_a,
+      data.current,
+      data.current_amp,
+      data.current_amps
+    )
   );
 
   const waterFlow = toNumber(
-    data.water_flow_lpm ??
-      data.flow_lpm
+    firstDefined(
+      data.water_flow_lpm,
+      data.flow_lpm,
+      data.water_flow
+    )
   );
+
+  const waterPressure = toNumber(
+    firstDefined(
+      data.water_pressure_bar,
+      data.pressure_bar,
+      data.water_pressure,
+      data.pressure
+    )
+  );
+
+  const temperature = toNumber(
+    firstDefined(
+      data.temperature_c,
+      data.temperature,
+      data.temp_c,
+      data.temp
+    )
+  );
+
+  const humidity = toNumber(
+    firstDefined(
+      data.humidity_percent,
+      data.humidity,
+      data.humidity_pct
+    )
+  );
+
+  const vibration = toNumber(
+    firstDefined(
+      data.vibration_mm_s,
+      data.vibration,
+      data.vibration_mms
+    )
+  );
+
+  const treatmentRate = toNumber(
+    firstDefined(
+      data.treatment_rate,
+      data.treatment_percent,
+      data.treatment
+    ),
+    DEFAULT_TREATMENT_RATE
+  );
+
+  const reuseRate = toNumber(
+    firstDefined(
+      data.reuse_rate,
+      data.reuse_percent,
+      data.reuse
+    ),
+    DEFAULT_REUSE_RATE
+  );
+
+  const rawStatus =
+    detection.facility_status ||
+    data.status ||
+    (
+      data.anomaly ||
+      anomalies.length ||
+      primaryAnomaly
+        ? "attention"
+        : "healthy"
+    );
+
+  const anomalyCount = toNumber(
+    detection.anomaly_count ??
+      anomalies.length
+  );
+
+  const energyLoss =
+    detection.estimated_energy_loss_kwh ??
+    data.estimated_energy_loss_kwh ??
+    Math.max(
+      0,
+      energy - expectedEnergy
+    );
+
+  const waterLoss =
+    data.estimated_water_loss_kl ??
+    detection.estimated_water_loss_kl ??
+    Math.max(
+      0,
+      water - expectedWater
+    );
 
   return {
     facility_code:
@@ -160,71 +298,81 @@ function normalizeMessage(message) {
       data.reading_time ||
       new Date().toISOString(),
 
-    // Energy
-    energy_kwh: energy,
-    expected_energy_kwh: expectedEnergy,
+    // ------------------------------------------------------
+    // ENERGY
+    // ------------------------------------------------------
 
-    // Water
-    water_kl: water,
-    expected_water_kl: expectedWater,
+    energy_kwh:
+      energy,
 
-    // Electrical
-    power_kw: power,
-    voltage_v: toNumber(
-      data.voltage_v ??
-        data.voltage
-    ),
-    current_a: toNumber(
-      data.current_a ??
-        data.current
-    ),
+    expected_energy_kwh:
+      expectedEnergy,
 
-    // Water telemetry
-    water_flow_lpm: waterFlow,
-    water_pressure_bar: toNumber(
-      data.water_pressure_bar ??
-        data.pressure_bar ??
-        data.water_pressure
-    ),
+    // ------------------------------------------------------
+    // WATER
+    // ------------------------------------------------------
 
-    // Treatment / reuse
-    treatment_rate: toNumber(
-      data.treatment_rate ??
-        data.treatment_percent,
-      DEFAULT_TREATMENT_RATE
-    ),
+    water_kl:
+      water,
 
-    reuse_rate: toNumber(
-      data.reuse_rate ??
-        data.reuse_percent,
-      DEFAULT_REUSE_RATE
-    ),
+    expected_water_kl:
+      expectedWater,
 
-    // Environment
-    temperature_c: toNumber(
-      data.temperature_c ??
-        data.temperature
-    ),
+    // ------------------------------------------------------
+    // ELECTRICAL
+    // ------------------------------------------------------
 
-    humidity_percent: toNumber(
-      data.humidity_percent ??
-        data.humidity
-    ),
+    power_kw:
+      power,
 
-    vibration_mm_s: toNumber(
-      data.vibration_mm_s ??
-        data.vibration
-    ),
+    voltage_v:
+      voltage,
 
-    // Leak detection
-    leak_detected: Boolean(
-      data.leak_detected
-    ),
+    current_a:
+      current,
 
-    // Realtime anomaly
-    telemetry_anomaly: Boolean(
-      data.anomaly
-    ),
+    // ------------------------------------------------------
+    // WATER TELEMETRY
+    // ------------------------------------------------------
+
+    water_flow_lpm:
+      waterFlow,
+
+    water_pressure_bar:
+      waterPressure,
+
+    // ------------------------------------------------------
+    // RESOURCE REUSE / TREATMENT
+    // ------------------------------------------------------
+
+    treatment_rate:
+      treatmentRate,
+
+    reuse_rate:
+      reuseRate,
+
+    // ------------------------------------------------------
+    // ENVIRONMENT
+    // ------------------------------------------------------
+
+    temperature_c:
+      temperature,
+
+    humidity_percent:
+      humidity,
+
+    vibration_mm_s:
+      vibration,
+
+    // ------------------------------------------------------
+    // LEAK / DETECTION
+    // ------------------------------------------------------
+
+    leak_detected:
+      Boolean(data.leak_detected),
+
+    telemetry_anomaly:
+      Boolean(data.anomaly),
 
     telemetry_anomaly_type:
       data.anomaly_type || null,
@@ -235,49 +383,64 @@ function normalizeMessage(message) {
     facility_status:
       normalizeStatus(rawStatus),
 
-    anomaly_count: toNumber(
-      detection.anomaly_count ??
-        anomalies.length
-    ),
+    anomaly_count:
+      anomalyCount,
 
-    // Loss calculations
+    // ------------------------------------------------------
+    // LOSSES
+    // ------------------------------------------------------
+
     estimated_energy_loss_kwh:
-      calculateEnergyLoss(
-        data,
-        detection,
-        expectedEnergy
+      Math.max(
+        0,
+        toNumber(energyLoss)
       ),
 
     estimated_water_loss_kl:
-      calculateWaterLoss(
-        data,
-        detection,
-        expectedWater
+      Math.max(
+        0,
+        toNumber(waterLoss)
       ),
+
+    // ------------------------------------------------------
+    // ANOMALIES
+    // ------------------------------------------------------
 
     anomalies,
 
     primary_anomaly:
       primaryAnomaly,
 
-    // Efficiency
-    energy_score: toNumber(
-      detection.efficiency?.energy_score
-    ),
+    // ------------------------------------------------------
+    // EFFICIENCY
+    // ------------------------------------------------------
 
-    water_score: toNumber(
-      detection.efficiency?.water_score
-    ),
+    energy_score:
+      toNumber(
+        detection.efficiency?.energy_score
+      ),
+
+    water_score:
+      toNumber(
+        detection.efficiency?.water_score
+      ),
 
     recommendation:
       detection.recommendation ||
       null,
 
-    _raw: message,
+    // ------------------------------------------------------
+    // DEBUG / RAW DATA
+    // ------------------------------------------------------
 
-    _receivedAt: Date.now()
+    _raw:
+      message,
+
+    _receivedAt:
+      Date.now()
   };
 }
+
 
 function buildAlert(facility) {
   if (
@@ -568,41 +731,41 @@ export function FlowSenseProvider({
             expected_energy_kwh:
               toNumber(
                 facility.expected_energy_kwh,
-                previous.expected_energy_kwh ||
+                previous.expected_energy_kwh ??
                   DEFAULT_EXPECTED_ENERGY
               ),
 
             expected_water_kl:
               toNumber(
                 facility.expected_water_kl,
-                previous.expected_water_kl ||
+                previous.expected_water_kl ??
                   DEFAULT_EXPECTED_WATER
               ),
 
             treatment_rate:
               toNumber(
                 facility.treatment_rate,
-                previous.treatment_rate ||
+                previous.treatment_rate ??
                   DEFAULT_TREATMENT_RATE
               ),
 
             reuse_rate:
               toNumber(
                 facility.reuse_rate,
-                previous.reuse_rate ||
+                previous.reuse_rate ??
                   DEFAULT_REUSE_RATE
               ),
 
             energy_score:
               toNumber(
                 facility.energy_score,
-                previous.energy_score || 0
+                previous.energy_score ?? 0
               ),
 
             water_score:
               toNumber(
                 facility.water_score,
-                previous.water_score || 0
+                previous.water_score ?? 0
               )
           };
 
@@ -636,11 +799,56 @@ export function FlowSenseProvider({
               power_kw:
                 facility.power_kw,
 
+              voltage_v:
+                facility.voltage_v,
+
+              current_a:
+                facility.current_a,
+
               water_flow_lpm:
                 facility.water_flow_lpm,
 
               water_pressure_bar:
                 facility.water_pressure_bar,
+
+              temperature_c:
+                facility.temperature_c,
+
+              humidity_percent:
+                facility.humidity_percent,
+
+              vibration_mm_s:
+                facility.vibration_mm_s,
+
+              treatment_rate:
+                facility.treatment_rate,
+
+              reuse_rate:
+                facility.reuse_rate,
+
+              leak_detected:
+                facility.leak_detected,
+
+              telemetry_anomaly:
+                facility.telemetry_anomaly,
+
+              telemetry_anomaly_type:
+                facility.telemetry_anomaly_type,
+
+              facility_status:
+                facility.facility_status,
+
+              anomaly_count:
+                facility.anomaly_count,
+
+              primary_anomaly:
+                facility.primary_anomaly,
+
+              energy_score:
+                facility.energy_score,
+
+              water_score:
+                facility.water_score,
 
               estimated_energy_loss_kwh:
                 facility.estimated_energy_loss_kwh,

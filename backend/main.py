@@ -1,4 +1,4 @@
-"""
+﻿"""
 FlowSense API - REST + realtime WebSocket backend.
 
 Stage 3:
@@ -477,6 +477,102 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+# ============================================================
+# REALTIME WEBSOCKET ROUTES
+# ============================================================
+
+@app.websocket("/ws/live/all")
+async def live_all_websocket(
+    websocket: WebSocket,
+):
+    await manager.connect(
+        "all",
+        websocket,
+    )
+
+    try:
+        while True:
+            try:
+                data = await asyncio.wait_for(
+                    websocket.receive_text(),
+                    timeout=25.0,
+                )
+
+                if data.lower() == "ping":
+                    await websocket.send_json(
+                        {
+                            "type": "pong"
+                        }
+                    )
+
+            except asyncio.TimeoutError:
+                await websocket.send_json(
+                    {
+                        "type": "heartbeat"
+                    }
+                )
+
+    except WebSocketDisconnect:
+        pass
+
+    except Exception as exc:
+        print(
+            f"[WebSocket] Error -> all: {exc}"
+        )
+
+    finally:
+        manager.disconnect(
+            "all",
+            websocket,
+        )
+
+
+@app.websocket("/ws/live/{facility_code}")
+async def live_facility_websocket(
+    websocket: WebSocket,
+    facility_code: str,
+):
+    await manager.connect(
+        facility_code,
+        websocket,
+    )
+
+    try:
+        while True:
+            try:
+                data = await asyncio.wait_for(
+                    websocket.receive_text(),
+                    timeout=25.0,
+                )
+
+                if data.lower() == "ping":
+                    await websocket.send_json(
+                        {
+                            "type": "pong"
+                        }
+                    )
+
+            except asyncio.TimeoutError:
+                await websocket.send_json(
+                    {
+                        "type": "heartbeat"
+                    }
+                )
+
+    except WebSocketDisconnect:
+        pass
+
+    except Exception as exc:
+        print(
+            f"[WebSocket] Error -> "
+            f"{facility_code}: {exc}"
+        )
+
+    finally:
+        manager.disconnect(
+            facility_code,
+            websocket,
+        )
 
 # ============================================================
 # JSON / SERIALIZATION HELPERS
@@ -1645,15 +1741,15 @@ async def broadcast_live_reading(
     Normal live flow:
 
         Simulator
-            ↓
+            â†“
         FastAPI
-            ↓
+            â†“
         In-memory source mapping
-            ↓
+            â†“
         Detection engine
-            ↓
+            â†“
         WebSocket broadcast
-            ↓
+            â†“
         Dashboard
 
     PostgreSQL is NOT touched during normal
@@ -2210,6 +2306,29 @@ def facility_report_ai_analysis(
                 detail=f"Facility {facility_code} not found",
             )
 
+        # Realtime-first: inject the latest live snapshot
+        # before the evidence package is sent to Ollama.
+        live_snapshot = LIVE_REPORT_CACHE.get(
+            facility_code
+        )
+
+        report["realtime"] = (
+            live_snapshot
+            if live_snapshot is not None
+            else None
+        )
+
+        report["report_metadata"] = {
+            "facility_code": facility_code,
+            "period": period,
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "realtime_available": live_snapshot is not None,
+            "generated_at": datetime.now(
+                timezone.utc
+            ).isoformat(),
+        }
+
         ai_result = generate_report_analysis(report)
 
         return {
@@ -2228,215 +2347,4 @@ def facility_report_ai_analysis(
         raise HTTPException(
             status_code=500,
             detail=f"AI report analysis failed: {exc}",
-        )
-
-# UNREACHABLE DUPLICATE PDF RETURN/EXCEPTION BLOCK REMOVED
-# Duplicate/removed code retained as line-count padding.
-# Duplicate/removed code retained as line-count padding.
-# Duplicate/removed code retained as line-count padding.
-# Duplicate/removed code retained as line-count padding.
-# Duplicate/removed code retained as line-count padding.
-# Duplicate/removed code retained as line-count padding.
-# Duplicate/removed code retained as line-count padding.
-# Duplicate/removed code retained as line-count padding.
-# Duplicate/removed code retained as line-count padding.
-# Duplicate/removed code retained as line-count padding.
-# Duplicate/removed code retained as line-count padding.
-# Duplicate/removed code retained as line-count padding.
-# Duplicate/removed code retained as line-count padding.
-# Duplicate/removed code retained as line-count padding.
-# Duplicate/removed code retained as line-count padding.
-# Duplicate/removed code retained as line-count padding.
-# Duplicate/removed code retained as line-count padding.
-# Duplicate/removed code retained as line-count padding.
-# Duplicate/removed code retained as line-count padding.
-# Duplicate/removed code retained as line-count padding.
-# Duplicate/removed code retained as line-count padding.
-# Duplicate/removed code retained as line-count padding.
-# Duplicate/removed code retained as line-count padding.
-# Duplicate/removed code retained as line-count padding.
-# Duplicate/removed code retained as line-count padding.
-# Duplicate/removed code retained as line-count padding.
-# Duplicate/removed code retained as line-count padding.
-# Duplicate/removed code retained as line-count padding.
-# Duplicate/removed code retained as line-count padding.
-# Duplicate/removed code retained as line-count padding.
-# Duplicate/removed code retained as line-count padding.
-# Duplicate/removed code retained as line-count padding.
-# Duplicate/removed code retained as line-count padding.
-
-# ============================================================
-# ALL-FACILITIES WEBSOCKET
-# ============================================================
-
-@app.websocket(
-    "/ws/live/all"
-)
-async def live_all_websocket(
-    websocket: WebSocket,
-):
-
-    channel = "all"
-
-    await manager.connect(
-        channel,
-        websocket,
-    )
-
-    try:
-
-        while True:
-
-            try:
-
-                message = (
-                    await asyncio.wait_for(
-                        websocket.receive_text(),
-                        timeout=30,
-                    )
-                )
-
-                if (
-                    message.lower()
-                    == "ping"
-                ):
-
-                    await websocket.send_json(
-                        {
-                            "type":
-                                "pong",
-
-                            "channel":
-                                "all",
-
-                            "timestamp":
-                                datetime.now(
-                                    timezone.utc
-                                ).isoformat(),
-                        }
-                    )
-
-            except asyncio.TimeoutError:
-
-                await websocket.send_json(
-                    {
-                        "type":
-                            "heartbeat",
-
-                        "channel":
-                            "all",
-
-                        "timestamp":
-                            datetime.now(
-                                timezone.utc
-                            ).isoformat(),
-                    }
-                )
-
-    except WebSocketDisconnect:
-
-        manager.disconnect(
-            channel,
-            websocket,
-        )
-
-    except Exception as exc:
-
-        manager.disconnect(
-            channel,
-            websocket,
-        )
-
-        print(
-            f"[WebSocket] Error -> "
-            f"all: {exc}"
-        )
-
-
-# ============================================================
-# FACILITY WEBSOCKET
-# ============================================================
-
-@app.websocket(
-    "/ws/live/{facility_code}"
-)
-async def live_websocket(
-    websocket: WebSocket,
-    facility_code: str,
-):
-
-    channel = facility_code
-
-    await manager.connect(
-        channel,
-        websocket,
-    )
-
-    try:
-
-        while True:
-
-            try:
-
-                message = (
-                    await asyncio.wait_for(
-                        websocket.receive_text(),
-                        timeout=30,
-                    )
-                )
-
-                if (
-                    message.lower()
-                    == "ping"
-                ):
-
-                    await websocket.send_json(
-                        {
-                            "type":
-                                "pong",
-
-                            "facility_code":
-                                facility_code,
-
-                            "timestamp":
-                                datetime.now(
-                                    timezone.utc
-                                ).isoformat(),
-                        }
-                    )
-
-            except asyncio.TimeoutError:
-
-                await websocket.send_json(
-                    {
-                        "type":
-                            "heartbeat",
-
-                        "facility_code":
-                            facility_code,
-
-                        "timestamp":
-                            datetime.now(
-                                timezone.utc
-                            ).isoformat(),
-                    }
-                )
-
-    except WebSocketDisconnect:
-
-        manager.disconnect(
-            channel,
-            websocket,
-        )
-
-    except Exception as exc:
-
-        manager.disconnect(
-            channel,
-            websocket,
-        )
-
-        print(
-            f"[WebSocket] Error -> "
-            f"{facility_code}: {exc}"
         )
