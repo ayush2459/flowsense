@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   BrowserRouter,
   Routes,
@@ -612,9 +612,10 @@ function Overview({
             </div>
 
             <div className="chart">
-              <ResponsiveContainer width="100%" height={300}>
+              <ResponsiveContainer width="100%" height="100%">
                 <AreaChart
                   data={energyChart}
+                  margin={{ top: 5, right: 10, left: 0, bottom: 25 }}
                 >
                   <CartesianGrid
                     stroke="#1c2d43"
@@ -629,11 +630,7 @@ function Overview({
                   <YAxis
                     stroke="#61748e"
                   />
-
-                  <Tooltip />
-
-                  <Area
-                    dataKey="v"
+                  <Area dataKey="v"
                     stroke="#31aaff"
                     fill="#31aaff"
                     fillOpacity=".12"
@@ -694,9 +691,10 @@ function Overview({
             </div>
 
             <div className="chart">
-              <ResponsiveContainer width="100%" height={300}>
+              <ResponsiveContainer width="100%" height="100%">
                 <LineChart
                   data={waterChart}
+                  margin={{ top: 5, right: 10, left: 0, bottom: 25 }}
                 >
                   <CartesianGrid
                     stroke="#1c2d43"
@@ -1368,7 +1366,7 @@ function Resource({
         </div>
 
         <div className="chart">
-          <ResponsiveContainer width="100%" height={300}>
+          <ResponsiveContainer width="100%" height="100%">
             <LineChart data={chartData}>
               <CartesianGrid
                 stroke="#1c2d43"
@@ -2874,6 +2872,14 @@ function AIInsights({
   );
 }
 
+/* =========================
+   REPORTS REALTIME DATA POLICY
+   Raw WebSocket telemetry is preferred for the
+   currently selected facility. Normalized facility
+   state is the fallback. Historical/report-engine
+   values remain separate from the live snapshot.
+========================= */
+
 function Reports() {
   const {
     facilityList,
@@ -2903,6 +2909,67 @@ function Reports() {
             item.facility_code === selectedFacility
         )
       : null;
+  const realtimeData =
+    selected?._raw?.data || {};
+
+  const live = selected || {};
+
+  const reportValue = (
+    rawValue,
+    normalizedValue,
+    fallback = null
+  ) =>
+    rawValue ??
+    normalizedValue ??
+    fallback;
+
+  const reportNumber = (
+    rawValue,
+    normalizedValue,
+    fallback = null
+  ) => {
+    const value = reportValue(
+      rawValue,
+      normalizedValue,
+      fallback
+    );
+
+    if (
+      value === null ||
+      value === undefined ||
+      value === ""
+    ) {
+      return null;
+    }
+
+    const number = Number(value);
+
+    return Number.isFinite(number)
+      ? number
+      : fallback;
+  };
+
+  const displayNumber = (
+    rawValue,
+    normalizedValue,
+    digits = 2,
+    suffix = ""
+  ) => {
+    const value = reportNumber(
+      rawValue,
+      normalizedValue
+    );
+
+    return value === null
+      ? "Not available"
+      : `${num(value, digits)}${suffix}`;
+  };
+
+  const primaryAnomaly =
+    live.primary_anomaly ||
+    realtimeData.primary_anomaly ||
+    realtimeData.detection?.primary_anomaly ||
+    null;
 
   useEffect(() => {
     if (
@@ -2937,17 +3004,65 @@ function Reports() {
       ? sum(key) / reportFacilities.length
       : 0;
 
-  const energy = sum("energy_kwh");
-  const expectedEnergy = sum("expected_energy_kwh");
-  const water = sum("water_kl");
-  const expectedWater = sum("expected_water_kl");
-  const power = sum("power_kw");
-  const flow = sum("water_flow_lpm");
-  const anomalyCount = reportFacilities.reduce(
-    (total, item) =>
-      total + (Number(item?.anomaly_count) || 0),
-    0
-  );
+  const energy = selected
+    ? reportNumber(
+        realtimeData.energy_kwh,
+        live.energy_kwh,
+        0
+      )
+    : sum("energy_kwh");
+
+  const expectedEnergy = selected
+    ? reportNumber(
+        realtimeData.expected_energy_kwh,
+        live.expected_energy_kwh,
+        0
+      )
+    : sum("expected_energy_kwh");
+
+  const water = selected
+    ? reportNumber(
+        realtimeData.water_kl,
+        live.water_kl,
+        0
+      )
+    : sum("water_kl");
+
+  const expectedWater = selected
+    ? reportNumber(
+        realtimeData.expected_water_kl,
+        live.expected_water_kl,
+        0
+      )
+    : sum("expected_water_kl");
+
+  const power = selected
+    ? reportNumber(
+        realtimeData.power_kw,
+        live.power_kw,
+        0
+      )
+    : sum("power_kw");
+
+  const flow = selected
+    ? reportNumber(
+        realtimeData.water_flow_lpm,
+        live.water_flow_lpm,
+        0
+      )
+    : sum("water_flow_lpm");
+
+  const anomalyCount = selected
+    ? Number(
+        realtimeData.anomaly_count ??
+        live.anomaly_count ??
+        0
+      )
+    : reportFacilities.reduce(
+        (total, item) =>
+          total + (Number(item?.anomaly_count) || 0),
+        0
+      );
 
   const energyScore = average("energy_score");
   const waterScore = average("water_score");
@@ -3072,6 +3187,16 @@ function Reports() {
     );
   };
 
+  const downloadPortfolioPdf = () => {
+    window.open(
+      api.reportPortfolioPdfUrl(
+        "24h"
+      ),
+      "_blank",
+      "noopener,noreferrer"
+    );
+  };
+
   if (!facilityList.length) {
     return (
       <Page
@@ -3165,6 +3290,15 @@ function Reports() {
               <FileText />
               Download PDF
             </button>
+            <button
+  type="button"
+  className="reports-pdf-button"
+  onClick={downloadPortfolioPdf}
+  title="Download the PDF report for all facilities"
+>
+  <FileText />
+  Download All Facilities PDF
+</button>
           </div>
         </div>
 
@@ -3274,9 +3408,10 @@ function Reports() {
                   {anomalyCount}
                 </div>
                 <div className="reports-kpi-detail">
-                  {selected.primary_anomaly?.anomaly_type ||
-                    selected.primary_anomaly?.type ||
-                    (selected.leak_detected
+                  {primaryAnomaly?.anomaly_type ||
+                    primaryAnomaly?.type ||
+                    ((realtimeData.leak_detected ??
+                      live.leak_detected)
                       ? "Leak detected"
                       : "No active anomaly")}
                 </div>
@@ -3293,23 +3428,48 @@ function Reports() {
                 <div className="reports-metric-list">
                   <MetricItem
                     label="Power demand"
-                    value={`${num(selected.power_kw, 2)} kW`}
+                    value={displayNumber(
+                      realtimeData.power_kw,
+                      live.power_kw,
+                      2,
+                      " kW"
+                    )}
                   />
                   <MetricItem
                     label="Energy efficiency"
-                    value={`${num(selected.energy_score, 1)}%`}
+                    value={displayNumber(
+                      realtimeData.energy_score,
+                      live.energy_score,
+                      1,
+                      "%"
+                    )}
                   />
                   <MetricItem
                     label="Estimated energy loss"
-                    value={`${num(selected.estimated_energy_loss_kwh, 2)} kWh`}
+                    value={displayNumber(
+                      realtimeData.estimated_energy_loss_kwh,
+                      live.estimated_energy_loss_kwh,
+                      2,
+                      " kWh"
+                    )}
                   />
                   <MetricItem
                     label="Voltage"
-                    value={`${num(selected.voltage, 1)} V`}
+                    value={displayNumber(
+                      realtimeData.voltage_v,
+                      live.voltage_v,
+                      1,
+                      " V"
+                    )}
                   />
                   <MetricItem
                     label="Current"
-                    value={`${num(selected.current, 2)} A`}
+                    value={displayNumber(
+                      realtimeData.current_a,
+                      live.current_a,
+                      2,
+                      " A"
+                    )}
                   />
                 </div>
               </Card>
@@ -3323,24 +3483,47 @@ function Reports() {
                 <div className="reports-metric-list">
                   <MetricItem
                     label="Flow"
-                    value={`${num(selected.water_flow_lpm, 2)} L/min`}
+                    value={displayNumber(
+                      realtimeData.water_flow_lpm,
+                      live.water_flow_lpm,
+                      2,
+                      " L/min"
+                    )}
                   />
                   <MetricItem
                     label="Pressure"
-                    value={`${num(selected.water_pressure_bar, 2)} bar`}
+                    value={displayNumber(
+                      realtimeData.water_pressure_bar,
+                      live.water_pressure_bar,
+                      2,
+                      " bar"
+                    )}
                   />
                   <MetricItem
                     label="Water efficiency"
-                    value={`${num(selected.water_score, 1)}%`}
+                    value={displayNumber(
+                      realtimeData.water_score,
+                      live.water_score,
+                      1,
+                      "%"
+                    )}
                   />
                   <MetricItem
                     label="Estimated water loss"
-                    value={`${num(selected.estimated_water_loss_kl, 2)} kL`}
+                    value={displayNumber(
+                      realtimeData.estimated_water_loss_kl,
+                      live.estimated_water_loss_kl,
+                      2,
+                      " kL"
+                    )}
                   />
                   <MetricItem
                     label="Leak status"
                     value={
-                      selected.leak_detected
+                      Boolean(
+                        realtimeData.leak_detected ??
+                        live.leak_detected
+                      )
                         ? "Leak detected"
                         : "No leak detected"
                     }
@@ -3359,23 +3542,48 @@ function Reports() {
                 <div className="reports-metric-list">
                   <MetricItem
                     label="Temperature"
-                    value={`${num(selected.temperature, 1)} °C`}
+                    value={displayNumber(
+                      realtimeData.temperature_c,
+                      live.temperature_c,
+                      1,
+                      " °C"
+                    )}
                   />
                   <MetricItem
                     label="Humidity"
-                    value={`${num(selected.humidity, 1)}%`}
+                    value={displayNumber(
+                      realtimeData.humidity_percent,
+                      live.humidity_percent,
+                      1,
+                      "%"
+                    )}
                   />
                   <MetricItem
                     label="Vibration"
-                    value={`${num(selected.vibration, 2)}`}
+                    value={displayNumber(
+                      realtimeData.vibration_mm_s,
+                      live.vibration_mm_s,
+                      2,
+                      " mm/s"
+                    )}
                   />
                   <MetricItem
                     label="Treatment rate"
-                    value={`${num(selected.treatment_rate, 1)}%`}
+                    value={displayNumber(
+                      realtimeData.treatment_rate,
+                      live.treatment_rate,
+                      1,
+                      "%"
+                    )}
                   />
                   <MetricItem
                     label="Reuse rate"
-                    value={`${num(selected.reuse_rate, 1)}%`}
+                    value={displayNumber(
+                      realtimeData.reuse_rate,
+                      live.reuse_rate,
+                      1,
+                      "%"
+                    )}
                   />
                 </div>
               </Card>
@@ -3387,11 +3595,11 @@ function Reports() {
                   sub="Realtime anomaly evidence"
                 />
 
-                {selected.primary_anomaly ? (
+                {primaryAnomaly ? (
                   <div className="reports-anomaly">
                     <div className="reports-anomaly-title">
-                      {selected.primary_anomaly.anomaly_type ||
-                        selected.primary_anomaly.type ||
+                      {primaryAnomaly.anomaly_type ||
+                        primaryAnomaly.type ||
                         "Realtime anomaly"}
                     </div>
 
@@ -3399,41 +3607,47 @@ function Reports() {
                       <MetricItem
                         label="Severity"
                         value={
-                          selected.primary_anomaly.severity ||
+                          primaryAnomaly.severity ||
                           "Warning"
                         }
                       />
                       <MetricItem
                         label="Source"
                         value={
-                          selected.primary_anomaly.likely_source ||
-                          selected.primary_anomaly.source_name ||
+                          primaryAnomaly.likely_source ||
+                          primaryAnomaly.source_name ||
                           "Realtime IoT"
                         }
                       />
                       <MetricItem
                         label="Area"
                         value={
-                          selected.primary_anomaly.area ||
-                          selected.primary_anomaly.location ||
+                          primaryAnomaly.area_name ||
+                          primaryAnomaly.area ||
+                          primaryAnomaly.location ||
                           "Detected facility area"
                         }
                       />
                       <MetricItem
                         label="Confidence"
                         value={
-                          selected.primary_anomaly.confidence != null
+                          primaryAnomaly.confidence_percent != null
                             ? `${num(
-                                selected.primary_anomaly.confidence,
+                                primaryAnomaly.confidence_percent,
                                 1
                               )}%`
-                            : "Available in detection data"
+                            : primaryAnomaly.confidence != null
+                              ? `${num(
+                                  primaryAnomaly.confidence,
+                                  1
+                                )}%`
+                              : "Available in detection data"
                         }
                       />
                     </div>
 
                     <p className="reports-anomaly-description">
-                      {selected.primary_anomaly.description ||
+                      {primaryAnomaly.description ||
                         "Realtime telemetry indicates an abnormal operating condition."}
                     </p>
                   </div>
@@ -4077,5 +4291,13 @@ function App() {
 }
 
 export default App;
+
+
+
+
+
+
+
+
 
 

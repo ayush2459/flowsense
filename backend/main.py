@@ -2279,6 +2279,164 @@ def generate_facility_report_pdf(
                 "facility PDF report"
             ),
         )
+# ============================================================
+# PORTFOLIO / ALL-FACILITIES PDF REPORT
+# ============================================================
+
+@app.get(
+    "/api/reports/portfolio/pdf"
+)
+def generate_portfolio_report_pdf(
+    period: str = "24h",
+    db: Session = Depends(get_db),
+):
+    """
+    Generate a PDF report covering all active facilities.
+
+    Uses the same authoritative PostgreSQL report data
+    used by the all-facilities reporting layer.
+    """
+
+    from report_engine import (
+        build_portfolio_report_data,
+        resolve_period,
+    )
+
+    from report_pdf import (
+        generate_portfolio_pdf,
+    )
+
+    try:
+        # ----------------------------------------------------
+        # Resolve reporting period
+        # ----------------------------------------------------
+
+        start, end = resolve_period(
+            period
+        )
+
+        # ----------------------------------------------------
+        # Build portfolio report data
+        # ----------------------------------------------------
+
+        report = build_portfolio_report_data(
+            db,
+            start,
+            end,
+        )
+
+        # ----------------------------------------------------
+        # Attach latest realtime snapshots
+        # ----------------------------------------------------
+
+        for facility_report in report.get(
+            "facilities",
+            [],
+        ):
+            facility = facility_report.get(
+                "facility",
+                {}
+            )
+
+            facility_code = facility.get(
+                "facility_code"
+            )
+
+            if not facility_code:
+                continue
+
+            live_snapshot = (
+                LIVE_REPORT_CACHE.get(
+                    facility_code
+                )
+            )
+
+            facility_report["realtime"] = (
+                live_snapshot
+                if live_snapshot is not None
+                else None
+            )
+
+        # ----------------------------------------------------
+        # Report metadata
+        # ----------------------------------------------------
+
+        report["report_metadata"][
+            "period"
+        ] = period
+
+        report["report_metadata"][
+            "start"
+        ] = start.isoformat()
+
+        report["report_metadata"][
+            "end"
+        ] = end.isoformat()
+
+        report["report_metadata"][
+            "realtime_available"
+        ] = bool(
+            LIVE_REPORT_CACHE
+        )
+
+        report["report_metadata"][
+            "generated_at"
+        ] = datetime.now(
+            timezone.utc
+        ).isoformat()
+
+        # ----------------------------------------------------
+        # Generate PDF
+        # ----------------------------------------------------
+
+        pdf_buffer = generate_portfolio_pdf(
+            report
+        )
+
+        # ----------------------------------------------------
+        # Filename
+        # ----------------------------------------------------
+
+        filename = (
+            f"FlowSense_Portfolio_"
+            f"{period}_Report.pdf"
+        )
+
+        # ----------------------------------------------------
+        # Return PDF
+        # ----------------------------------------------------
+
+        return StreamingResponse(
+            pdf_buffer,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition":
+                    f'attachment; filename="{filename}"'
+            },
+        )
+
+    except ValueError as exc:
+
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        )
+
+    except Exception as exc:
+
+        print(
+            f"[Portfolio PDF] Error -> "
+            f"{exc}"
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Failed to generate "
+                "portfolio PDF report"
+            ),
+        )
+
 @app.post("/api/reports/facilities/{facility_code}/ai-analysis")
 def facility_report_ai_analysis(
     facility_code: str,

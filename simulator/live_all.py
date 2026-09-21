@@ -294,6 +294,15 @@ def generate_telemetry(
             3
         ),
 
+        "voltage_v": round(
+            random.uniform(220, 240),
+            2
+        ),
+
+        "current_a": round(
+            max(0.1, power_kw * 1000 / 230),
+            2
+        ),
         "water_kl": round(
             water,
             3

@@ -1083,3 +1083,711 @@ def generate_facility_pdf(report):
 
     buffer.seek(0)
     return buffer
+
+
+# ============================================================
+# PORTFOLIO / ALL-FACILITIES PDF GENERATOR
+# ============================================================
+
+def generate_portfolio_pdf(report):
+    """
+    Generate an all-facilities portfolio PDF from the report data
+    returned by build_portfolio_report_data().
+
+    The generator does not create or infer telemetry values.
+    Each facility row is rendered from its authoritative report
+    package and, when available, its latest realtime snapshot.
+    """
+
+    buffer = BytesIO()
+
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=18 * mm,
+        leftMargin=18 * mm,
+        topMargin=22 * mm,
+        bottomMargin=18 * mm,
+        title="FlowSense Portfolio Report",
+        author="FlowSense",
+    )
+
+    styles = getSampleStyleSheet()
+
+    title_style = ParagraphStyle(
+        "PortfolioReportTitle",
+        parent=styles["Title"],
+        fontName="Helvetica-Bold",
+        fontSize=22,
+        leading=27,
+        alignment=TA_CENTER,
+        spaceAfter=8,
+    )
+
+    subtitle_style = ParagraphStyle(
+        "PortfolioReportSubtitle",
+        parent=styles["Normal"],
+        fontSize=10,
+        leading=15,
+        alignment=TA_CENTER,
+        textColor=colors.HexColor("#667085"),
+        spaceAfter=18,
+    )
+
+    heading_style = ParagraphStyle(
+        "PortfolioSectionHeading",
+        parent=styles["Heading2"],
+        fontName="Helvetica-Bold",
+        fontSize=14,
+        leading=18,
+        spaceBefore=12,
+        spaceAfter=8,
+        textColor=colors.HexColor("#101828"),
+    )
+
+    body_style = ParagraphStyle(
+        "PortfolioBody",
+        parent=styles["BodyText"],
+        fontSize=9,
+        leading=14,
+        spaceAfter=6,
+    )
+
+    small_style = ParagraphStyle(
+        "PortfolioSmall",
+        parent=styles["BodyText"],
+        fontSize=8,
+        leading=11,
+        textColor=colors.HexColor("#667085"),
+    )
+
+    story = []
+
+    metadata = report.get("report_metadata") or {}
+    facilities = report.get("facilities") or []
+
+    # ========================================================
+    # PORTFOLIO COUNTS
+    # ========================================================
+
+    realtime_count = 0
+    realtime_anomaly_count = 0
+    persisted_anomaly_count = 0
+    alert_count = 0
+    data_error_count = 0
+
+    for facility_report in facilities:
+        if facility_report.get("data_error"):
+            data_error_count += 1
+
+        realtime = facility_report.get("realtime") or {}
+
+        if realtime:
+            realtime_count += 1
+
+            detection = realtime.get("detection") or {}
+
+            realtime_anomaly_count += int(
+                _num(
+                    detection.get(
+                        "anomaly_count"
+                    ),
+                    0,
+                )
+            )
+
+        persisted_anomaly_count += len(
+            facility_report.get("anomalies") or []
+        )
+
+        alert_count += len(
+            facility_report.get("alerts") or []
+        )
+
+    # ========================================================
+    # COVER
+    # ========================================================
+
+    story.append(Spacer(1, 25 * mm))
+
+    story.append(
+        Paragraph(
+            "FlowSense",
+            title_style,
+        )
+    )
+
+    story.append(
+        Paragraph(
+            "Portfolio & All-Facilities Report",
+            ParagraphStyle(
+                "PortfolioMainTitle",
+                parent=title_style,
+                fontSize=18,
+                leading=23,
+            ),
+        )
+    )
+
+    story.append(
+        Paragraph(
+            "Energy & Water Intelligence",
+            ParagraphStyle(
+                "PortfolioSubtitleTitle",
+                parent=title_style,
+                fontSize=15,
+                leading=20,
+            ),
+        )
+    )
+
+    story.append(
+        Paragraph(
+            f"{_text(metadata.get('scope'), 'all_facilities').replace('_', ' ').title()} "
+            f"• {_text(metadata.get('facility_count'), len(facilities))} facilities",
+            subtitle_style,
+        )
+    )
+
+    metadata_table = [
+        [
+            "Report Period",
+            _text(metadata.get("period")),
+        ],
+        [
+            "From",
+            _format_timestamp(
+                metadata.get("start")
+                or metadata.get("period_start")
+            ),
+        ],
+        [
+            "To",
+            _format_timestamp(
+                metadata.get("end")
+                or metadata.get("period_end")
+            ),
+        ],
+        [
+            "Generated",
+            _format_timestamp(
+                metadata.get("generated_at")
+            ),
+        ],
+        [
+            "Facilities",
+            str(len(facilities)),
+        ],
+        [
+            "Realtime Snapshots",
+            f"{realtime_count} / {len(facilities)}",
+        ],
+    ]
+
+    story.append(
+        _table(
+            metadata_table,
+            widths=[55 * mm, 100 * mm],
+            header=False,
+        )
+    )
+
+    story.append(Spacer(1, 10 * mm))
+
+    story.append(
+        Paragraph(
+            "This portfolio report consolidates the real FlowSense "
+            "report packages for all active facilities. Facility-level "
+            "values are kept separate so that readings are not "
+            "artificially aggregated or fabricated.",
+            body_style,
+        )
+    )
+
+    story.append(PageBreak())
+
+    # ========================================================
+    # PORTFOLIO SUMMARY
+    # ========================================================
+
+    story.append(
+        Paragraph(
+            "1. Portfolio Summary",
+            heading_style,
+        )
+    )
+
+    summary_table = [
+        ["Metric", "Count"],
+        [
+            "Active facilities in report",
+            str(len(facilities)),
+        ],
+        [
+            "Facilities with realtime snapshot",
+            str(realtime_count),
+        ],
+        [
+            "Realtime anomaly count",
+            str(realtime_anomaly_count),
+        ],
+        [
+            "Persisted anomalies in period",
+            str(persisted_anomaly_count),
+        ],
+        [
+            "Persisted alerts in period",
+            str(alert_count),
+        ],
+        [
+            "Facilities with report data errors",
+            str(data_error_count),
+        ],
+    ]
+
+    story.append(
+        _table(
+            summary_table,
+            widths=[115 * mm, 40 * mm],
+        )
+    )
+
+    story.append(Spacer(1, 5 * mm))
+
+    story.append(
+        Paragraph(
+            "Realtime anomaly counts come from the latest live "
+            "detection snapshot for each facility. Persisted anomaly "
+            "and alert counts come from PostgreSQL records within "
+            "the selected reporting period.",
+            small_style,
+        )
+    )
+
+    # ========================================================
+    # ALL-FACILITIES TABLE
+    # ========================================================
+
+    story.append(
+        Paragraph(
+            "2. All-Facilities Current Status",
+            heading_style,
+        )
+    )
+
+    story.append(
+        Paragraph(
+            "The following table provides a facility-by-facility "
+            "view of the latest available realtime telemetry. "
+            "N/A indicates that a value was not available in the "
+            "underlying report package.",
+            body_style,
+        )
+    )
+
+    facility_rows = [
+        [
+            "Facility",
+            "Status",
+            "Energy",
+            "Water",
+            "Anomalies",
+        ]
+    ]
+
+    for facility_report in facilities:
+        facility = facility_report.get("facility") or {}
+        realtime = facility_report.get("realtime") or {}
+        realtime_data = realtime.get("data") or {}
+        detection = realtime.get("detection") or {}
+
+        facility_name = _text(
+            facility.get("facility_name")
+            or facility.get("facility_code")
+        )
+
+        facility_code = _text(
+            facility.get("facility_code")
+        )
+
+        status = _text(
+            detection.get("facility_status")
+            if realtime
+            else facility.get("status")
+        )
+
+        energy_value = realtime_data.get(
+            "energy_kwh"
+        )
+        water_value = realtime_data.get(
+            "water_kl"
+        )
+
+        anomaly_count = detection.get(
+            "anomaly_count"
+        )
+
+        facility_rows.append([
+            Paragraph(
+                f"<b>{facility_name}</b><br/>"
+                f"{facility_code}",
+                small_style,
+            ),
+            status,
+            (
+                f"{_fmt(energy_value)} kWh"
+                if energy_value is not None
+                else "N/A"
+            ),
+            (
+                f"{_fmt(water_value)} kL"
+                if water_value is not None
+                else "N/A"
+            ),
+            (
+                str(int(_num(anomaly_count, 0)))
+                if anomaly_count is not None
+                else "N/A"
+            ),
+        ])
+
+    if len(facility_rows) == 1:
+        facility_rows.append([
+            "No facilities available",
+            "N/A",
+            "N/A",
+            "N/A",
+            "N/A",
+        ])
+
+    story.append(
+        _table(
+            facility_rows,
+            widths=[
+                63 * mm,
+                30 * mm,
+                28 * mm,
+                25 * mm,
+                18 * mm,
+            ],
+        )
+    )
+
+    # ========================================================
+    # FACILITY DETAILS
+    # ========================================================
+
+    story.append(PageBreak())
+
+    story.append(
+        Paragraph(
+            "3. Facility Detail",
+            heading_style,
+        )
+    )
+
+    story.append(
+        Paragraph(
+            "Each facility section below retains its own realtime "
+            "metrics, efficiency scores, detection state and "
+            "persisted reporting-period records.",
+            body_style,
+        )
+    )
+
+    for index, facility_report in enumerate(
+        facilities,
+        start=1,
+    ):
+        facility = facility_report.get("facility") or {}
+        realtime = facility_report.get("realtime") or {}
+        realtime_data = realtime.get("data") or {}
+        detection = realtime.get("detection") or {}
+        efficiency = detection.get("efficiency") or {}
+
+        facility_name = _text(
+            facility.get("facility_name")
+            or facility.get("facility_code")
+        )
+        facility_code = _text(
+            facility.get("facility_code")
+        )
+
+        story.append(
+            Paragraph(
+                f"{index}. {facility_name}",
+                heading_style,
+            )
+        )
+
+        story.append(
+            Paragraph(
+                f"{facility_code} • "
+                f"{_text(facility.get('facility_type'))} • "
+                f"{_text(facility.get('city'))}, "
+                f"{_text(facility.get('state'))}",
+                small_style,
+            )
+        )
+
+        if facility_report.get("data_error"):
+            story.append(
+                Paragraph(
+                    "Report data error: "
+                    f"{_text(facility_report.get('data_error'))}",
+                    body_style,
+                )
+            )
+            continue
+
+        detail_rows = [
+            [
+                "Metric",
+                "Value",
+                "Metric",
+                "Value",
+            ],
+            [
+                "Energy",
+                (
+                    f"{_fmt(realtime_data.get('energy_kwh'))} kWh"
+                    if realtime_data.get("energy_kwh") is not None
+                    else "N/A"
+                ),
+                "Expected Energy",
+                (
+                    f"{_fmt(realtime_data.get('expected_energy_kwh'))} kWh"
+                    if realtime_data.get("expected_energy_kwh") is not None
+                    else "N/A"
+                ),
+            ],
+            [
+                "Water",
+                (
+                    f"{_fmt(realtime_data.get('water_kl'))} kL"
+                    if realtime_data.get("water_kl") is not None
+                    else "N/A"
+                ),
+                "Expected Water",
+                (
+                    f"{_fmt(realtime_data.get('expected_water_kl'))} kL"
+                    if realtime_data.get("expected_water_kl") is not None
+                    else "N/A"
+                ),
+            ],
+            [
+                "Power",
+                (
+                    f"{_fmt(realtime_data.get('power_kw'))} kW"
+                    if realtime_data.get("power_kw") is not None
+                    else "N/A"
+                ),
+                "Water Flow",
+                (
+                    f"{_fmt(realtime_data.get('water_flow_lpm'))} L/min"
+                    if realtime_data.get("water_flow_lpm") is not None
+                    else "N/A"
+                ),
+            ],
+            [
+                "Energy Efficiency",
+                _fmt(
+                    efficiency.get("energy_score"),
+                    1,
+                ),
+                "Water Efficiency",
+                _fmt(
+                    efficiency.get("water_score"),
+                    1,
+                ),
+            ],
+            [
+                "Facility Status",
+                _text(
+                    detection.get("facility_status")
+                    if realtime
+                    else facility.get("status")
+                ),
+                "Realtime Anomalies",
+                str(
+                    int(
+                        _num(
+                            detection.get(
+                                "anomaly_count"
+                            ),
+                            0,
+                        )
+                    )
+                ),
+            ],
+        ]
+
+        story.append(
+            _table(
+                detail_rows,
+                widths=[
+                    37 * mm,
+                    40 * mm,
+                    37 * mm,
+                    41 * mm,
+                ],
+            )
+        )
+
+        primary = detection.get(
+            "primary_anomaly"
+        ) or {}
+
+        if primary:
+            story.append(
+                Paragraph(
+                    "<b>Latest Realtime Detection</b>",
+                    body_style,
+                )
+            )
+
+            detection_rows = [
+                ["Field", "Value"],
+                [
+                    "Anomaly Type",
+                    _text(
+                        primary.get(
+                            "anomaly_type"
+                        )
+                    ),
+                ],
+                [
+                    "Severity",
+                    _text(
+                        primary.get(
+                            "severity"
+                        )
+                    ),
+                ],
+                [
+                    "Source",
+                    _text(
+                        primary.get(
+                            "likely_source"
+                        )
+                    ),
+                ],
+                [
+                    "Area",
+                    _text(
+                        primary.get(
+                            "area_name"
+                        )
+                    ),
+                ],
+                [
+                    "Confidence",
+                    (
+                        f"{_fmt(primary.get('confidence_percent'), 1)} %"
+                        if primary.get("confidence_percent") is not None
+                        else "N/A"
+                    ),
+                ],
+                [
+                    "Description",
+                    _text(
+                        primary.get(
+                            "description"
+                        )
+                    ),
+                ],
+            ]
+
+            story.append(
+                _table(
+                    detection_rows,
+                    widths=[50 * mm, 105 * mm],
+                )
+            )
+
+        anomalies = facility_report.get(
+            "anomalies"
+        ) or []
+
+        alerts = facility_report.get(
+            "alerts"
+        ) or []
+
+        story.append(
+            Paragraph(
+                f"Persisted anomalies: <b>{len(anomalies)}</b> "
+                f"• Persisted alerts: <b>{len(alerts)}</b>",
+                small_style,
+            )
+        )
+
+        if realtime:
+            story.append(
+                Paragraph(
+                    "Realtime snapshot: "
+                    f"{_format_timestamp(realtime.get('timestamp'))}",
+                    small_style,
+                )
+            )
+
+        # Keep each facility section together where possible,
+        # while allowing ReportLab to split large tables.
+        story.append(Spacer(1, 6 * mm))
+
+        if index < len(facilities):
+            story.append(PageBreak())
+
+    # ========================================================
+    # DATA AVAILABILITY
+    # ========================================================
+
+    story.append(PageBreak())
+
+    story.append(
+        Paragraph(
+            "4. Data Availability & Calculation Notes",
+            heading_style,
+        )
+    )
+
+    notes = [
+        "The portfolio is built from the active facilities returned by the FlowSense PostgreSQL database.",
+        "Facility-level historical readings, baselines, anomalies, alerts, devices and sensors are sourced from the existing report engine.",
+        "Latest realtime values are included only when a live snapshot is available in the FlowSense realtime report cache.",
+        "Realtime energy and water values are displayed per facility and are not summed into a portfolio total because the underlying readings represent facility-level telemetry.",
+        "Missing values are displayed as N/A rather than being replaced with fabricated values.",
+        "Realtime anomaly counts describe the latest live detection state and are separate from persisted database anomaly records.",
+        "Persisted anomaly and alert counts are limited to the selected reporting period.",
+        "The report does not infer historical totals when historical database records are unavailable.",
+    ]
+
+    for note in notes:
+        story.append(
+            Paragraph(
+                f"• {note}",
+                body_style,
+            )
+        )
+
+    story.append(Spacer(1, 5 * mm))
+
+    story.append(
+        Paragraph(
+            "Portfolio report generation completed from the "
+            "available FlowSense facility report packages.",
+            body_style,
+        )
+    )
+
+    # ========================================================
+    # BUILD
+    # ========================================================
+
+    doc.build(
+        story,
+        onFirstPage=_header_footer,
+        onLaterPages=_header_footer,
+    )
+
+    buffer.seek(0)
+    return buffer

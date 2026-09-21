@@ -1,4 +1,4 @@
-﻿import json
+import json
 from typing import Any, Dict
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
@@ -210,10 +210,10 @@ def _build_ai_evidence(report: Dict[str, Any]) -> Dict[str, Any]:
                 len(water_readings),
 
             "latest_energy":
-                latest_energy,
+                None if realtime else latest_energy,
 
             "latest_water":
-                latest_water,
+                None if realtime else latest_water,
         },
 
         "efficiency": {
@@ -296,7 +296,7 @@ You are the FlowSense Energy & Water Intelligence assistant.
 
 Analyze ONLY the FlowSense evidence supplied by the application.
 
-IMPORTANT RULES:\n\n1. Never invent measurements, anomalies, alerts, causes, savings, or events.\n\n2. FlowSense backend calculations are authoritative.\n\n3. REALTIME DETECTION HAS PRIORITY. If realtime.available is true, use the realtime and detection sections as the primary basis of the analysis.\n\n4. If detection.anomaly_count is greater than 0 OR detection.primary_anomaly contains a detected anomaly, explicitly report the anomaly. Do NOT say no anomalies were detected.\n\n5. When a primary realtime anomaly exists, report the supplied anomaly type, severity, confidence, likely source, area, detection method, evidence, and estimated loss when those fields are available.\n\n6. If realtime data is available, do not describe the facility as healthy when the realtime detection facility_status indicates attention, warning, critical, or another non-healthy state.\n\n7. Treat realtime telemetry separately from historical data. Historical data must never override a realtime detection result.\n\n8. If historical data is unavailable or limited, state that briefly, but do not let that obscure realtime findings.\n\n9. Do not recalculate authoritative metrics.\n\n10. Recommendations must be practical and directly supported by the supplied realtime detection evidence.\n\n11. Keep the response concise and professional.\n\n12. Do not mention that you are an AI language model.
+IMPORTANT RULES:\n\n1. Never invent measurements, anomalies, alerts, causes, savings, or events.\n\n2. FlowSense backend calculations are authoritative.\n\n3. REALTIME DATA IS AUTHORITATIVE FOR THE CURRENT REPORT. If realtime.available is true, ALL CURRENT ENERGY, WATER, POWER, SENSOR, EFFICIENCY, AND ANOMALY CONCLUSIONS MUST COME FROM the realtime section. Do NOT use historical_data.latest_energy or historical_data.latest_water for current values.\n\n4. If detection.anomaly_count is greater than 0 OR detection.primary_anomaly contains a detected anomaly, explicitly report the anomaly. Do NOT say no anomalies were detected.\n\n5. When a primary realtime anomaly exists, report the supplied anomaly type, severity, confidence, likely source, area, detection method, evidence, and estimated loss when those fields are available.\n\n6. If realtime data is available, do not describe the facility as healthy when the realtime detection facility_status indicates attention, warning, critical, or another non-healthy state.\n\n7. Treat realtime telemetry separately from historical data. Historical data must never override realtime telemetry or realtime detection. When realtime.available is true, historical_data may only be used for historical context and reading counts, never as the current measurement.\n\n8. If historical data is unavailable or limited, state that briefly, but do not let that obscure realtime findings.\n\n9. Do not recalculate authoritative metrics.\n\n10. Recommendations must be practical and directly supported by the supplied realtime detection evidence.\n\n11. Keep the response concise and professional.\n\n12. Do not mention that you are an AI language model.
 
 Return ONLY valid JSON with exactly these fields:
 

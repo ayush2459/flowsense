@@ -793,7 +793,6 @@ def build_facility_report_data(
         ),
     }
 
-
 # ---------------------------------------------------------------------------
 # Portfolio / All-facilities report
 # ---------------------------------------------------------------------------
@@ -804,13 +803,410 @@ def build_portfolio_report_data(
     end_time: datetime,
 ) -> Dict[str, Any]:
     """
-    Build the report evidence package for ALL active facilities.
+    Build a compact report evidence package for ALL active facilities.
 
-    No artificial aggregation is performed here.
-    Each facility gets its own real data package.
+    The individual facility report intentionally loads detailed historical
+    evidence. The portfolio report is different: it needs current/latest
+    information for every facility and therefore uses bulk PostgreSQL
+    queries instead of calling build_facility_report_data() once per
+    facility.
+
+    This keeps the portfolio PDF based entirely on authoritative database
+    values while avoiding the N x many-query pattern that can make a
+    100-facility portfolio request take several minutes.
+
+    No artificial values are created.
+    Missing data remains None / empty lists.
     """
 
     facilities = get_all_facilities(db)
+
+    if not facilities:
+        return {
+            "report_metadata": {
+                "scope": "all_facilities",
+                "period_start": _iso(start_time),
+                "period_end": _iso(end_time),
+                "generated_at": _iso(_utc_now()),
+                "data_source": "FlowSense PostgreSQL",
+                "facility_count": 0,
+            },
+            "facilities": [],
+        }
+
+    facility_codes = [
+        facility["facility_code"]
+        for facility in facilities
+        if facility.get("facility_code")
+    ]
+
+    # -----------------------------------------------------------------------
+    # Latest persisted meter reading for each active facility/resource.
+    # PostgreSQL DISTINCT ON gives one row per facility/resource without
+    # issuing a separate query for every facility.
+    # -----------------------------------------------------------------------
+
+    latest_rows = db.execute(
+        text(
+            """
+            SELECT DISTINCT ON (
+                f.facility_code,
+                LOWER(m.resource_type)
+            )
+                f.facility_code,
+                m.meter_code,
+                m.meter_name,
+                m.resource_type,
+                m.unit,
+                mr.reading_time,
+                mr.reading_value,
+                mr.quality_status,
+                mr.source
+            FROM meter_readings mr
+            JOIN meters m
+                ON m.meter_id = mr.meter_id
+            JOIN facilities f
+                ON f.facility_id = m.facility_id
+            WHERE LOWER(COALESCE(f.status, 'active')) = 'active'
+              AND LOWER(m.resource_type) IN ('energy', 'water')
+            ORDER BY
+                f.facility_code,
+                LOWER(m.resource_type),
+                mr.reading_time DESC
+            """
+        )
+    ).fetchall()
+
+    latest_by_facility: Dict[str, Dict[str, Dict[str, Any]]] = {}
+
+    for row in latest_rows:
+        item = _row_to_dict(row)
+        code = item.get("facility_code")
+        resource = str(
+            item.get("resource_type") or ""
+        ).lower()
+
+        if not code:
+            continue
+
+        latest_by_facility.setdefault(
+            code,
+            {}
+        )[resource] = item
+
+    # -----------------------------------------------------------------------
+    # Latest persisted reading within the requested reporting period.
+    # This is also bulk-loaded with DISTINCT ON.
+    # -----------------------------------------------------------------------
+
+    period_rows = db.execute(
+        text(
+            """
+            SELECT DISTINCT ON (
+                f.facility_code,
+                LOWER(m.resource_type)
+            )
+                f.facility_code,
+                m.meter_code,
+                m.meter_name,
+                m.resource_type,
+                m.unit,
+                mr.reading_time,
+                mr.reading_value,
+                mr.quality_status,
+                mr.source
+            FROM meter_readings mr
+            JOIN meters m
+                ON m.meter_id = mr.meter_id
+            JOIN facilities f
+                ON f.facility_id = m.facility_id
+            WHERE LOWER(COALESCE(f.status, 'active')) = 'active'
+              AND LOWER(m.resource_type) IN ('energy', 'water')
+              AND mr.reading_time >= :start_time
+              AND mr.reading_time <= :end_time
+            ORDER BY
+                f.facility_code,
+                LOWER(m.resource_type),
+                mr.reading_time DESC
+            """
+        ),
+        {
+            "start_time": start_time,
+            "end_time": end_time,
+        },
+    ).fetchall()
+
+    period_latest_by_facility: Dict[
+        str,
+        Dict[str, Dict[str, Any]]
+    ] = {}
+
+    for row in period_rows:
+        item = _row_to_dict(row)
+        code = item.get("facility_code")
+        resource = str(
+            item.get("resource_type") or ""
+        ).lower()
+
+        if not code:
+            continue
+
+        period_latest_by_facility.setdefault(
+            code,
+            {}
+        )[resource] = item
+
+    # -----------------------------------------------------------------------
+    # Baselines for all active facilities.
+    # -----------------------------------------------------------------------
+
+    baseline_rows = db.execute(
+        text(
+            """
+            SELECT
+                f.facility_code,
+                cb.resource_type,
+                cb.hour_of_day,
+                cb.day_of_week,
+                cb.expected_value,
+                cb.lower_threshold,
+                cb.upper_threshold,
+                cb.calculation_period_days,
+                cb.updated_at
+            FROM consumption_baselines cb
+            JOIN facilities f
+                ON f.facility_id = cb.facility_id
+            WHERE LOWER(COALESCE(f.status, 'active')) = 'active'
+            ORDER BY
+                f.facility_code,
+                cb.resource_type,
+                cb.day_of_week,
+                cb.hour_of_day
+            """
+        )
+    ).fetchall()
+
+    baselines_by_facility: Dict[
+        str,
+        Dict[str, List[Dict[str, Any]]]
+    ] = {}
+
+    for row in baseline_rows:
+        item = _row_to_dict(row)
+        code = item.get("facility_code")
+        resource = str(
+            item.get("resource_type") or ""
+        ).lower()
+
+        if not code:
+            continue
+
+        baselines_by_facility.setdefault(
+            code,
+            {}
+        ).setdefault(resource, []).append(item)
+
+    # -----------------------------------------------------------------------
+    # Persisted anomalies for the reporting period.
+    # One bulk query replaces one anomaly query per facility.
+    # -----------------------------------------------------------------------
+
+    anomaly_rows = db.execute(
+        text(
+            """
+            SELECT
+                f.facility_code,
+                a.anomaly_id,
+                a.anomaly_type,
+                a.resource_type,
+                a.severity,
+                a.detected_at,
+                a.expected_value,
+                a.actual_value,
+                a.deviation_percent,
+                a.estimated_loss,
+                a.loss_unit,
+                a.status,
+                a.description
+            FROM anomalies a
+            JOIN facilities f
+                ON f.facility_id = a.facility_id
+            WHERE LOWER(COALESCE(f.status, 'active')) = 'active'
+              AND a.detected_at >= :start_time
+              AND a.detected_at <= :end_time
+            ORDER BY
+                f.facility_code,
+                a.detected_at DESC
+            """
+        ),
+        {
+            "start_time": start_time,
+            "end_time": end_time,
+        },
+    ).fetchall()
+
+    anomalies_by_facility: Dict[
+        str,
+        List[Dict[str, Any]]
+    ] = {}
+
+    for row in anomaly_rows:
+        item = _row_to_dict(row)
+        code = item.pop("facility_code", None)
+
+        if not code:
+            continue
+
+        anomalies_by_facility.setdefault(
+            code,
+            []
+        ).append(item)
+
+    # -----------------------------------------------------------------------
+    # Alerts for the reporting period.
+    # -----------------------------------------------------------------------
+
+    alert_rows = db.execute(
+        text(
+            """
+            SELECT
+                f.facility_code,
+                al.alert_id,
+                al.alert_title,
+                al.alert_message,
+                al.severity,
+                al.triggered_at,
+                al.status
+            FROM alerts al
+            JOIN facilities f
+                ON f.facility_id = al.facility_id
+            WHERE LOWER(COALESCE(f.status, 'active')) = 'active'
+              AND al.triggered_at >= :start_time
+              AND al.triggered_at <= :end_time
+            ORDER BY
+                f.facility_code,
+                al.triggered_at DESC
+            """
+        ),
+        {
+            "start_time": start_time,
+            "end_time": end_time,
+        },
+    ).fetchall()
+
+    alerts_by_facility: Dict[
+        str,
+        List[Dict[str, Any]]
+    ] = {}
+
+    for row in alert_rows:
+        item = _row_to_dict(row)
+        code = item.pop("facility_code", None)
+
+        if not code:
+            continue
+
+        alerts_by_facility.setdefault(
+            code,
+            []
+        ).append(item)
+
+    # -----------------------------------------------------------------------
+    # Devices for all active facilities.
+    # -----------------------------------------------------------------------
+
+    device_rows = db.execute(
+        text(
+            """
+            SELECT
+                f.facility_code,
+                d.device_code,
+                d.device_name,
+                d.device_model,
+                d.firmware_version,
+                d.communication_protocol,
+                d.installation_location,
+                d.status,
+                d.last_seen_at
+            FROM iot_devices d
+            JOIN facilities f
+                ON f.facility_id = d.facility_id
+            WHERE LOWER(COALESCE(f.status, 'active')) = 'active'
+            ORDER BY
+                f.facility_code,
+                d.device_code
+            """
+        )
+    ).fetchall()
+
+    devices_by_facility: Dict[
+        str,
+        List[Dict[str, Any]]
+    ] = {}
+
+    for row in device_rows:
+        item = _row_to_dict(row)
+        code = item.pop("facility_code", None)
+
+        if not code:
+            continue
+
+        devices_by_facility.setdefault(
+            code,
+            []
+        ).append(item)
+
+    # -----------------------------------------------------------------------
+    # Sensors for all active facilities.
+    # -----------------------------------------------------------------------
+
+    sensor_rows = db.execute(
+        text(
+            """
+            SELECT
+                f.facility_code,
+                d.device_code,
+                s.sensor_code,
+                s.sensor_name,
+                s.sensor_type,
+                s.measurement,
+                s.unit,
+                s.data_type,
+                s.status
+            FROM iot_sensors s
+            JOIN iot_devices d
+                ON d.iot_device_id = s.iot_device_id
+            JOIN facilities f
+                ON f.facility_id = d.facility_id
+            WHERE LOWER(COALESCE(f.status, 'active')) = 'active'
+            ORDER BY
+                f.facility_code,
+                d.device_code,
+                s.sensor_code
+            """
+        )
+    ).fetchall()
+
+    sensors_by_facility: Dict[
+        str,
+        List[Dict[str, Any]]
+    ] = {}
+
+    for row in sensor_rows:
+        item = _row_to_dict(row)
+        code = item.pop("facility_code", None)
+
+        if not code:
+            continue
+
+        sensors_by_facility.setdefault(
+            code,
+            []
+        ).append(item)
+
+    # -----------------------------------------------------------------------
+    # Assemble compact facility report packages.
+    # -----------------------------------------------------------------------
 
     facility_reports: List[Dict[str, Any]] = []
 
@@ -820,34 +1216,157 @@ def build_portfolio_report_data(
         if not code:
             continue
 
-        try:
-            facility_reports.append(
-                build_facility_report_data(
-                    db,
-                    code,
-                    start_time,
-                    end_time,
-                )
+        latest = latest_by_facility.get(
+            code,
+            {}
+        )
+
+        period_latest = (
+            period_latest_by_facility.get(
+                code,
+                {}
             )
-        except Exception as exc:
-            # Preserve the facility in the report while making
-            # the failure explicit instead of fabricating data.
-            facility_reports.append(
-                {
-                    "report_metadata": {
-                        "scope": "facility",
-                        "facility_code": code,
-                        "period_start": _iso(start_time),
-                        "period_end": _iso(end_time),
-                        "generated_at": _iso(
-                            _utc_now()
-                        ),
-                        "data_source": "FlowSense PostgreSQL",
-                    },
+        )
+
+        energy_reading = (
+            period_latest.get("energy")
+            or latest.get("energy")
+        )
+
+        water_reading = (
+            period_latest.get("water")
+            or latest.get("water")
+        )
+
+        devices = devices_by_facility.get(
+            code,
+            []
+        )
+
+        sensors = sensors_by_facility.get(
+            code,
+            []
+        )
+
+        latest_device_seen = None
+
+        for device in devices:
+            seen = device.get("last_seen_at")
+
+            if seen is None:
+                continue
+
+            if (
+                latest_device_seen is None
+                or str(seen) > str(latest_device_seen)
+            ):
+                latest_device_seen = seen
+
+        facility_reports.append(
+            {
+                "report_metadata": {
+                    "scope": "facility",
+                    "facility_code": code,
+                    "period_start": _iso(start_time),
+                    "period_end": _iso(end_time),
+                    "generated_at": _iso(
+                        _utc_now()
+                    ),
+                    "data_source": "FlowSense PostgreSQL",
+                },
+
+                "facility": facility,
+
+                "current_snapshot": {
                     "facility": facility,
-                    "data_error": str(exc),
-                }
-            )
+
+                    "latest_energy": {
+                        "value": _number(
+                            energy_reading.get(
+                                "reading_value"
+                            )
+                            if energy_reading
+                            else None
+                        ),
+                        "reading_time": _iso(
+                            energy_reading.get(
+                                "reading_time"
+                            )
+                            if energy_reading
+                            else None
+                        ),
+                    },
+
+                    "latest_water": {
+                        "value": _number(
+                            water_reading.get(
+                                "reading_value"
+                            )
+                            if water_reading
+                            else None
+                        ),
+                        "reading_time": _iso(
+                            water_reading.get(
+                                "reading_time"
+                            )
+                            if water_reading
+                            else None
+                        ),
+                    },
+
+                    "devices": devices,
+                    "latest_device_seen": _iso(
+                        latest_device_seen
+                    ),
+                },
+
+                "energy": {
+                    "readings": (
+                        [period_latest["energy"]]
+                        if period_latest.get("energy")
+                        else []
+                    ),
+                    "baselines": (
+                        baselines_by_facility
+                        .get(code, {})
+                        .get("energy", [])
+                    ),
+                },
+
+                "water": {
+                    "readings": (
+                        [period_latest["water"]]
+                        if period_latest.get("water")
+                        else []
+                    ),
+                    "baselines": (
+                        baselines_by_facility
+                        .get(code, {})
+                        .get("water", [])
+                    ),
+                },
+
+                # The portfolio PDF does not require the complete
+                # reconciliation/monthly-history datasets.
+                "reconciliation": [],
+
+                "anomalies": anomalies_by_facility.get(
+                    code,
+                    []
+                ),
+
+                "alerts": alerts_by_facility.get(
+                    code,
+                    []
+                ),
+
+                "devices": devices,
+
+                "sensors": sensors,
+
+                "monthly_summaries": [],
+            }
+        )
 
     return {
         "report_metadata": {
@@ -856,8 +1375,11 @@ def build_portfolio_report_data(
             "period_end": _iso(end_time),
             "generated_at": _iso(_utc_now()),
             "data_source": "FlowSense PostgreSQL",
-            "facility_count": len(facility_reports),
+            "facility_count": len(
+                facility_reports
+            ),
         },
+
         "facilities": facility_reports,
     }
 

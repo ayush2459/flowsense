@@ -183,7 +183,12 @@ export const api = {
     `${BASE}/api/reports/facilities/${encode(
       facilityCode
     )}/pdf?period=${encode(period)}`,
-
+  reportPortfolioPdfUrl: (
+    period = "24h"
+  ) =>
+    `${BASE}/api/reports/portfolio/pdf?period=${encode(
+      period
+    )}`,
   /*
    * Portfolio historical data
    */
