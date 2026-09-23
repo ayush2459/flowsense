@@ -18,6 +18,1102 @@ from reportlab.platypus import (
 
 
 # ============================================================
+
+# ============================================================
+# FLOW SENSE VISUAL DESIGN SYSTEM — ENHANCED EDITION
+# ============================================================
+# This layer upgrades the PDF presentation without changing the
+# underlying FlowSense calculations, telemetry semantics, or data
+# sources. The reporting logic remains authoritative; this module
+# focuses on hierarchy, readability, cards, visual status treatment,
+# section separators, and executive-style presentation.
+# ============================================================
+
+from reportlab.lib.colors import HexColor
+from reportlab.platypus import HRFlowable
+from reportlab.pdfbase.pdfmetrics import stringWidth
+
+
+# -----------------------------
+# Theme palette
+# -----------------------------
+
+FS_NAVY = HexColor("#0B1F3A")
+FS_BLUE = HexColor("#1769E0")
+FS_CYAN = HexColor("#16B7D8")
+FS_TEAL = HexColor("#0E9F8A")
+FS_GREEN = HexColor("#1F9D55")
+FS_AMBER = HexColor("#D9822B")
+FS_RED = HexColor("#D64545")
+FS_PURPLE = HexColor("#6956D8")
+FS_INK = HexColor("#172033")
+FS_MUTED = HexColor("#667085")
+FS_SUBTLE = HexColor("#98A2B3")
+FS_BORDER = HexColor("#E4E7EC")
+FS_SURFACE = HexColor("#F8FAFC")
+FS_SURFACE_ALT = HexColor("#F2F4F7")
+FS_WHITE = HexColor("#FFFFFF")
+FS_SHADOW = HexColor("#D0D5DD")
+FS_LIGHT_BLUE = HexColor("#EAF2FF")
+FS_LIGHT_CYAN = HexColor("#E9FAFC")
+FS_LIGHT_GREEN = HexColor("#EAF8F0")
+FS_LIGHT_AMBER = HexColor("#FFF5E8")
+FS_LIGHT_RED = HexColor("#FFF0F0")
+FS_LIGHT_PURPLE = HexColor("#F1EEFF")
+
+
+# -----------------------------
+# Theme helpers
+# -----------------------------
+
+def _fs_status_color(status):
+    value = str(status or "").strip().lower()
+    if value in ("critical", "crit"):
+        return FS_RED
+    if value in ("attention", "warning", "warn", "needs attention"):
+        return FS_AMBER
+    if value in ("healthy", "normal", "ok", "good", "active"):
+        return FS_GREEN
+    return FS_BLUE
+
+
+def _fs_status_bg(status):
+    value = str(status or "").strip().lower()
+    if value in ("critical", "crit"):
+        return FS_LIGHT_RED
+    if value in ("attention", "warning", "warn", "needs attention"):
+        return FS_LIGHT_AMBER
+    if value in ("healthy", "normal", "ok", "good", "active"):
+        return FS_LIGHT_GREEN
+    return FS_LIGHT_BLUE
+
+
+def _fs_metric_color(metric):
+    value = str(metric or "").strip().lower()
+    if "energy" in value:
+        return FS_BLUE
+    if "water" in value:
+        return FS_CYAN
+    if "efficiency" in value:
+        return FS_TEAL
+    if "anomaly" in value or "critical" in value:
+        return FS_RED
+    return FS_PURPLE
+
+
+def _fs_safe_text(value):
+    if value is None:
+        return "N/A"
+    return str(value)
+
+
+def _safe_text(value, default="—"):
+    """Safely convert report values to renderable PDF text."""
+    if value is None:
+        return default
+    try:
+        text = str(value).strip()
+    except Exception:
+        return default
+    return text if text else default
+
+
+def _fs_kpi_card(label, value, unit="", accent=FS_BLUE, note=None):
+    """
+    Create a compact executive KPI card using a ReportLab table.
+    The card is deliberately data-agnostic so it can be reused by
+    facility and portfolio reports.
+    """
+    value_text = _fs_safe_text(value)
+    unit_text = _fs_safe_text(unit)
+    note_text = _fs_safe_text(note) if note else ""
+    value_markup = f'<font color="#172033" size="17"><b>{value_text}</b></font>'
+    if unit_text:
+        value_markup += f' <font color="#667085" size="8">{unit_text}</font>'
+    body = [
+        [
+            Paragraph(
+                f'<font color="{accent.hexval()}"><b>{_fs_safe_text(label).upper()}</b></font>',
+                ParagraphStyle(
+                    "FSCardLabel",
+                    fontName="Helvetica-Bold",
+                    fontSize=7,
+                    leading=9,
+                    textColor=accent,
+                ),
+            )
+        ],
+        [
+            Paragraph(
+                value_markup,
+                ParagraphStyle(
+                    "FSCardValue",
+                    fontName="Helvetica-Bold",
+                    fontSize=17,
+                    leading=20,
+                    textColor=FS_INK,
+                ),
+            )
+        ],
+    ]
+    if note_text:
+        body.append(
+            [
+                Paragraph(
+                    note_text,
+                    ParagraphStyle(
+                        "FSCardNote",
+                        fontName="Helvetica",
+                        fontSize=7,
+                        leading=9,
+                        textColor=FS_MUTED,
+                    ),
+                )
+            ]
+        )
+    card = Table(body, colWidths=[43 * mm], hAlign="LEFT")
+    card.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), FS_WHITE),
+                ("BOX", (0, 0), (-1, -1), 0.7, FS_BORDER),
+                ("LINEBEFORE", (0, 0), (0, -1), 3.0, accent),
+                ("LEFTPADDING", (0, 0), (-1, -1), 9),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                ("TOPPADDING", (0, 0), (-1, -1), 7),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ]
+        )
+    )
+    return card
+
+
+def _fs_status_badge(status):
+    status_text = _fs_safe_text(status)
+    color = _fs_status_color(status_text)
+    bg = _fs_status_bg(status_text)
+    badge = Table(
+        [
+            [
+                Paragraph(
+                    f"<b>{status_text.upper()}</b>",
+                    ParagraphStyle(
+                        "FSStatusBadge",
+                        fontName="Helvetica-Bold",
+                        fontSize=7,
+                        leading=9,
+                        textColor=color,
+                        alignment=TA_CENTER,
+                    ),
+                )
+            ]
+        ],
+        colWidths=[28 * mm],
+        hAlign="LEFT",
+    )
+    badge.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), bg),
+                ("BOX", (0, 0), (-1, -1), 0.4, color),
+                ("LEFTPADDING", (0, 0), (-1, -1), 5),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ]
+        )
+    )
+    return badge
+
+
+def _fs_section_rule(width=165 * mm, accent=FS_BLUE):
+    return HRFlowable(
+        width="100%",
+        thickness=1.1,
+        color=accent,
+        spaceBefore=1,
+        spaceAfter=6,
+        hAlign="LEFT",
+    )
+
+
+def _fs_progress_bar(value, maximum=100, width=48 * mm, accent=FS_BLUE):
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        numeric = 0.0
+    try:
+        maximum_value = float(maximum)
+    except (TypeError, ValueError):
+        maximum_value = 100.0
+    if maximum_value <= 0:
+        maximum_value = 100.0
+    ratio = max(0.0, min(1.0, numeric / maximum_value))
+    outer = Table([[""]], colWidths=[width], rowHeights=[5 * mm])
+    outer.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), FS_SURFACE_ALT),
+                ("BOX", (0, 0), (-1, -1), 0.4, FS_BORDER),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+            ]
+        )
+    )
+    # Keep the actual ratio visible even in environments where nested
+    # tables are rendered differently by ReportLab versions.
+    return Table(
+        [
+            [
+                Paragraph(
+                    f'<font color="{accent.hexval()}">{"■" * max(1, int(ratio * 18))}</font>',
+                    ParagraphStyle(
+                        "FSProgress",
+                        fontName="Helvetica-Bold",
+                        fontSize=7,
+                        leading=7,
+                        textColor=accent,
+                    ),
+                ),
+                outer,
+            ]
+        ],
+        colWidths=[12 * mm, width],
+        style=TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+                ("TOPPADDING", (0, 0), (-1, -1), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+            ]
+        ),
+    )
+
+
+def _fs_page_title(story, title, subtitle=None, accent=FS_BLUE):
+    story.append(
+        Paragraph(
+            _fs_safe_text(title),
+            ParagraphStyle(
+                "FSPageTitle",
+                fontName="Helvetica-Bold",
+                fontSize=19,
+                leading=23,
+                textColor=FS_INK,
+                spaceBefore=3,
+                spaceAfter=3,
+            ),
+        )
+    )
+    story.append(_fs_section_rule(accent=accent))
+    if subtitle:
+        story.append(
+            Paragraph(
+                _fs_safe_text(subtitle),
+                ParagraphStyle(
+                    "FSPageSubtitle",
+                    fontName="Helvetica",
+                    fontSize=8.5,
+                    leading=12,
+                    textColor=FS_MUTED,
+                    spaceAfter=8,
+                ),
+            )
+        )
+
+
+def _fs_metric_grid(cards, columns=3):
+    """
+    Arrange KPI card flowables into a compact grid.
+    """
+    rows = []
+    current = []
+    for card in cards:
+        current.append(card)
+        if len(current) == columns:
+            rows.append(current)
+            current = []
+    if current:
+        while len(current) < columns:
+            current.append("")
+        rows.append(current)
+    if not rows:
+        return Spacer(1, 0)
+    table = Table(
+        rows,
+        colWidths=[53 * mm] * columns,
+        hAlign="LEFT",
+    )
+    table.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                ("TOPPADDING", (0, 0), (-1, -1), 2),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ]
+        )
+    )
+    return table
+
+
+def _fs_portfolio_banner(story, title, subtitle, count=None):
+    content = [
+        Paragraph(
+            _fs_safe_text(title),
+            ParagraphStyle(
+                "FSBannerTitle",
+                fontName="Helvetica-Bold",
+                fontSize=17,
+                leading=21,
+                textColor=FS_WHITE,
+            ),
+        ),
+        Paragraph(
+            _fs_safe_text(subtitle),
+            ParagraphStyle(
+                "FSBannerSubtitle",
+                fontName="Helvetica",
+                fontSize=8,
+                leading=11,
+                textColor=HexColor("#DCE8F7"),
+            ),
+        ),
+    ]
+    if count is not None:
+        content.append(
+            Paragraph(
+                f"<b>{_fs_safe_text(count)}</b> facilities",
+                ParagraphStyle(
+                    "FSBannerCount",
+                    fontName="Helvetica-Bold",
+                    fontSize=8,
+                    leading=10,
+                    textColor=FS_WHITE,
+                ),
+            )
+        )
+    banner = Table([[content]], colWidths=[165 * mm])
+    banner.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), FS_NAVY),
+                ("BOX", (0, 0), (-1, -1), 0, FS_NAVY),
+                ("LEFTPADDING", (0, 0), (-1, -1), 13),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 13),
+                ("TOPPADDING", (0, 0), (-1, -1), 11),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 11),
+            ]
+        )
+    )
+    story.append(banner)
+    story.append(Spacer(1, 5 * mm))
+
+
+def _fs_facility_identity_card(story, facility):
+    name = _text(facility.get("facility_name"))
+    code = _text(facility.get("facility_code"))
+    facility_type = _text(facility.get("facility_type"))
+    city = _text(facility.get("city"))
+    state = _text(facility.get("state"))
+    status = _text(facility.get("status"), "Healthy")
+    location = f"{city}, {state}"
+    rows = [
+        [
+            Paragraph(
+                f"<b>{name}</b>",
+                ParagraphStyle(
+                    "FSIdentityName",
+                    fontName="Helvetica-Bold",
+                    fontSize=13,
+                    leading=16,
+                    textColor=FS_INK,
+                ),
+            ),
+            _fs_status_badge(status),
+        ],
+        [
+            Paragraph(
+                f"{code}  •  {facility_type}  •  {location}",
+                ParagraphStyle(
+                    "FSIdentityMeta",
+                    fontName="Helvetica",
+                    fontSize=8,
+                    leading=11,
+                    textColor=FS_MUTED,
+                ),
+            ),
+            "",
+        ],
+    ]
+    table = Table(rows, colWidths=[125 * mm, 40 * mm])
+    table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), FS_WHITE),
+                ("BOX", (0, 0), (-1, -1), 0.7, FS_BORDER),
+                ("LEFTPADDING", (0, 0), (-1, -1), 10),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+                ("TOPPADDING", (0, 0), (-1, -1), 7),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ]
+        )
+    )
+    story.append(table)
+    story.append(Spacer(1, 4 * mm))
+
+
+def _fs_render_efficiency_cards(story, energy_score, water_score, status):
+    cards = [
+        _fs_kpi_card(
+            "Energy efficiency",
+            _fmt(energy_score, 1),
+            "%",
+            FS_BLUE,
+            "Realtime pipeline score",
+        ),
+        _fs_kpi_card(
+            "Water efficiency",
+            _fmt(water_score, 1),
+            "%",
+            FS_CYAN,
+            "Realtime pipeline score",
+        ),
+        _fs_kpi_card(
+            "Detection state",
+            _safe_text(status),
+            "",
+            _fs_status_color(status),
+            "Latest realtime snapshot",
+        ),
+    ]
+    story.append(_fs_metric_grid(cards, columns=3))
+    story.append(Spacer(1, 2 * mm))
+
+
+def _fs_render_realtime_cards(
+    story,
+    energy_actual,
+    energy_expected,
+    energy_variance,
+    water_actual,
+    water_expected,
+    water_variance,
+):
+    energy_note = (
+        f"Variance {_format_variance(energy_variance, 'kWh')}"
+        if energy_variance is not None
+        else "Expected value unavailable"
+    )
+    water_note = (
+        f"Variance {_format_variance(water_variance, 'kL')}"
+        if water_variance is not None
+        else "Expected value unavailable"
+    )
+    cards = [
+        _fs_kpi_card(
+            "Energy consumption",
+            _fmt(energy_actual),
+            "kWh",
+            FS_BLUE,
+            energy_note,
+        ),
+        _fs_kpi_card(
+            "Energy target",
+            _fmt(energy_expected),
+            "kWh",
+            FS_PURPLE,
+            "Current facility target",
+        ),
+        _fs_kpi_card(
+            "Water consumption",
+            _fmt(water_actual),
+            "kL",
+            FS_CYAN,
+            water_note,
+        ),
+        _fs_kpi_card(
+            "Water target",
+            _fmt(water_expected),
+            "kL",
+            FS_TEAL,
+            "Current facility target",
+        ),
+    ]
+    story.append(_fs_metric_grid(cards, columns=4))
+    story.append(Spacer(1, 2 * mm))
+
+
+def _fs_render_portfolio_health_cards(story, counts, total):
+    cards = [
+        _fs_kpi_card(
+            "Healthy facilities",
+            counts.get("Healthy", 0),
+            "",
+            FS_GREEN,
+            f"of {total} facilities",
+        ),
+        _fs_kpi_card(
+            "Attention",
+            counts.get("Attention", 0),
+            "",
+            FS_AMBER,
+            "Realtime detection state",
+        ),
+        _fs_kpi_card(
+            "Critical",
+            counts.get("Critical", 0),
+            "",
+            FS_RED,
+            "Realtime detection state",
+        ),
+        _fs_kpi_card(
+            "Realtime conditions",
+            counts.get("Attention", 0) + counts.get("Critical", 0),
+            "",
+            FS_PURPLE,
+            "Attention + Critical",
+        ),
+    ]
+    story.append(_fs_metric_grid(cards, columns=4))
+    story.append(Spacer(1, 3 * mm))
+
+
+def _fs_render_portfolio_snapshot_cards(story, realtime_count, facility_count,
+                                         realtime_anomaly_count,
+                                         persisted_anomaly_count,
+                                         alert_count):
+    cards = [
+        _fs_kpi_card(
+            "Facilities",
+            facility_count,
+            "",
+            FS_NAVY,
+            "Active facilities in report",
+        ),
+        _fs_kpi_card(
+            "Realtime snapshots",
+            f"{realtime_count}/{facility_count}",
+            "",
+            FS_BLUE,
+            "Available at generation time",
+        ),
+        _fs_kpi_card(
+            "Realtime anomalies",
+            realtime_anomaly_count,
+            "",
+            FS_RED if realtime_anomaly_count else FS_GREEN,
+            "Latest detection state",
+        ),
+        _fs_kpi_card(
+            "Persisted records",
+            persisted_anomaly_count,
+            "",
+            FS_PURPLE,
+            f"{alert_count} alerts in period",
+        ),
+    ]
+    story.append(_fs_metric_grid(cards, columns=4))
+    story.append(Spacer(1, 3 * mm))
+
+
+# -----------------------------
+# Optional visual components
+# -----------------------------
+
+def _fs_text_panel(title, body, accent=FS_BLUE):
+    panel = Table(
+        [
+            [
+                Paragraph(
+                    _fs_safe_text(title),
+                    ParagraphStyle(
+                        "FSTextPanelTitle",
+                        fontName="Helvetica-Bold",
+                        fontSize=9,
+                        leading=12,
+                        textColor=FS_INK,
+                    ),
+                )
+            ],
+            [
+                Paragraph(
+                    _fs_safe_text(body),
+                    ParagraphStyle(
+                        "FSTextPanelBody",
+                        fontName="Helvetica",
+                        fontSize=8,
+                        leading=12,
+                        textColor=FS_MUTED,
+                    ),
+                )
+            ],
+        ],
+        colWidths=[165 * mm],
+    )
+    panel.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), FS_SURFACE),
+                ("BOX", (0, 0), (-1, -1), 0.6, FS_BORDER),
+                ("LINEBEFORE", (0, 0), (0, -1), 3, accent),
+                ("LEFTPADDING", (0, 0), (-1, -1), 10),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+                ("TOPPADDING", (0, 0), (-1, -1), 7),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+            ]
+        )
+    )
+    return panel
+
+
+def _fs_add_empty_state(story, message, detail=None):
+    body = _fs_safe_text(message)
+    if detail:
+        body += f"<br/><font size='7'>{_fs_safe_text(detail)}</font>"
+    story.append(
+        _fs_text_panel(
+            "No additional records",
+            body,
+            FS_MUTED,
+        )
+    )
+
+
+def _fs_metric_label(value, unit=""):
+    if value is None:
+        return "N/A"
+    return f"{_fmt(value)} {unit}".strip()
+
+
+def _fs_variance_label(actual, expected, unit=""):
+    variance = _safe_difference(actual, expected)
+    if variance is None:
+        return "N/A"
+    return _format_variance(variance, unit)
+
+
+# -----------------------------
+# Additional report styling
+# -----------------------------
+
+def _fs_style_title(base_style):
+    base_style.fontName = "Helvetica-Bold"
+    base_style.textColor = FS_NAVY
+    base_style.fontSize = 22
+    base_style.leading = 26
+    return base_style
+
+
+def _fs_style_heading(base_style, accent=FS_BLUE):
+    base_style.fontName = "Helvetica-Bold"
+    base_style.textColor = FS_INK
+    base_style.fontSize = 14
+    base_style.leading = 18
+    base_style.spaceBefore = 12
+    base_style.spaceAfter = 7
+    return base_style
+
+
+def _fs_style_body(base_style):
+    base_style.fontName = "Helvetica"
+    base_style.textColor = FS_INK
+    base_style.fontSize = 9
+    base_style.leading = 13
+    return base_style
+
+
+def _fs_style_small(base_style):
+    base_style.fontName = "Helvetica"
+    base_style.textColor = FS_MUTED
+    base_style.fontSize = 7.5
+    base_style.leading = 10
+    return base_style
+
+
+# -----------------------------
+# Visual QA notes
+# -----------------------------
+
+FS_VISUAL_QA_CHECKLIST = [
+    "Use consistent navy primary headings across facility and portfolio reports.",
+    "Use blue for energy-related primary metrics.",
+    "Use cyan or teal for water-related primary metrics.",
+    "Use green, amber, and red consistently for Healthy, Attention, and Critical states.",
+    "Keep KPI variance visually distinct from anomaly status.",
+    "Keep historical records visually separate from realtime snapshots.",
+    "Keep facility-level values separate from portfolio-level counts.",
+    "Avoid presenting target variance as physical loss without authoritative evidence.",
+    "Use compact cards before dense tables so executives can scan the report.",
+    "Use subtle borders instead of heavy grid lines wherever possible.",
+    "Use muted explanatory text for methodology and data-quality notes.",
+    "Preserve N/A semantics for missing data.",
+]
+
+
+# -----------------------------
+# Reusable visual separators
+# -----------------------------
+
+def _fs_separator(story, accent=FS_BORDER):
+    story.append(
+        HRFlowable(
+            width="100%",
+            thickness=0.6,
+            color=accent,
+            spaceBefore=3,
+            spaceAfter=7,
+        )
+    )
+
+
+def _fs_spacer(story, mm_value=3):
+    story.append(Spacer(1, mm_value * mm))
+
+
+# -----------------------------
+# Executive summary helpers
+# -----------------------------
+
+def _fs_summary_sentence(status, anomaly_count, variance_text):
+    normalized = str(status or "").lower()
+    if normalized == "critical":
+        state = "The latest realtime snapshot reports a critical detection state."
+    elif normalized == "attention":
+        state = "The latest realtime snapshot reports a condition requiring attention."
+    else:
+        state = "The latest realtime snapshot reports no active realtime anomaly."
+    if anomaly_count:
+        anomaly_text = f" {anomaly_count} realtime anomaly condition(s) are present."
+    else:
+        anomaly_text = " No realtime anomaly condition is reported."
+    if variance_text:
+        variance = f" KPI variance remains visible as {variance_text}."
+    else:
+        variance = ""
+    return state + anomaly_text + variance
+
+
+def _fs_render_summary_panel(
+    story,
+    status,
+    anomaly_count,
+    energy_variance,
+    water_variance,
+):
+    variance_parts = []
+    if energy_variance is not None:
+        variance_parts.append(
+            f"energy {_format_variance(energy_variance, 'kWh')}"
+        )
+    if water_variance is not None:
+        variance_parts.append(
+            f"water {_format_variance(water_variance, 'kL')}"
+        )
+    variance_text = ", ".join(variance_parts)
+    sentence = _fs_summary_sentence(
+        status,
+        anomaly_count,
+        variance_text,
+    )
+    story.append(
+        _fs_text_panel(
+            "Realtime Executive Summary",
+            sentence,
+            _fs_status_color(status),
+        )
+    )
+    story.append(Spacer(1, 3 * mm))
+
+
+# -----------------------------
+# Portfolio facility row helper
+# -----------------------------
+
+def _fs_portfolio_facility_row(
+    facility_name,
+    facility_code,
+    status,
+    energy,
+    water,
+    anomaly_count,
+):
+    return [
+        Paragraph(
+            f"<b>{_fs_safe_text(facility_name)}</b><br/>"
+            f"<font color='#667085'>{_fs_safe_text(facility_code)}</font>",
+            ParagraphStyle(
+                "FSPortfolioFacility",
+                fontName="Helvetica",
+                fontSize=8,
+                leading=10,
+                textColor=FS_INK,
+            ),
+        ),
+        _fs_status_badge(status),
+        Paragraph(
+            _fs_metric_label(energy, "kWh"),
+            ParagraphStyle(
+                "FSEnergyValue",
+                fontName="Helvetica-Bold",
+                fontSize=8,
+                leading=10,
+                textColor=FS_BLUE,
+            ),
+        ),
+        Paragraph(
+            _fs_metric_label(water, "kL"),
+            ParagraphStyle(
+                "FSWaterValue",
+                fontName="Helvetica-Bold",
+                fontSize=8,
+                leading=10,
+                textColor=FS_CYAN,
+            ),
+        ),
+        Paragraph(
+            _fs_safe_text(anomaly_count),
+            ParagraphStyle(
+                "FSAnomalyValue",
+                fontName="Helvetica-Bold",
+                fontSize=8,
+                leading=10,
+                textColor=FS_RED if anomaly_count else FS_GREEN,
+                alignment=TA_CENTER,
+            ),
+        ),
+    ]
+
+
+# -----------------------------
+# Facility comparison helpers
+# -----------------------------
+
+def _fs_deviation_badge(percentage):
+    if percentage is None:
+        return _fs_status_badge("N/A")
+    if percentage >= 20:
+        status = "Critical"
+    elif percentage >= 10:
+        status = "Attention"
+    else:
+        status = "Healthy"
+    return _fs_status_badge(f"{_fmt(percentage, 1)}%" if status != "Healthy"
+                            else f"{_fmt(percentage, 1)}%")
+
+
+def _fs_numeric_paragraph(value, unit="", accent=FS_INK):
+    return Paragraph(
+        _fs_metric_label(value, unit),
+        ParagraphStyle(
+            "FSNumeric",
+            fontName="Helvetica-Bold",
+            fontSize=8,
+            leading=10,
+            textColor=accent,
+        ),
+    )
+
+
+# -----------------------------
+# Long-form style documentation
+# -----------------------------
+# The following design notes intentionally remain in the source so
+# future maintainers can understand why the visual system exists.
+# They also make the module easier to extend without changing the
+# semantics of FlowSense calculations.
+#
+# Visual principle 01:
+# Realtime information should be scannable before a user reaches a
+# dense table. KPI cards therefore precede detailed tables.
+#
+# Visual principle 02:
+# A target is a comparison reference, not an anomaly by itself.
+# The report therefore uses separate visual treatments for variance
+# and detection status.
+#
+# Visual principle 03:
+# Historical and realtime information have different temporal
+# meanings. Their sections should never visually imply that they
+# represent the same snapshot.
+#
+# Visual principle 04:
+# Portfolio reports summarize the state of facilities but should not
+# imply that facility-level consumption has been safely aggregated.
+#
+# Visual principle 05:
+# Status colors are semantic, not decorative. Green means the
+# detection payload reports a healthy/normal state, amber means
+# attention, and red means critical.
+#
+# Visual principle 06:
+# Blue is reserved primarily for energy, cyan/teal for water, purple
+# for contextual analytics, and navy for structural navigation.
+#
+# Visual principle 07:
+# Explanatory notes use muted typography so they remain available
+# without competing with operational metrics.
+#
+# Visual principle 08:
+# Missing data remains N/A. The visual layer never converts missing
+# data into zeros.
+#
+# Visual principle 09:
+# The report should look useful at executive level while preserving
+# enough detail for engineering and operations teams.
+#
+# Visual principle 10:
+# A polished PDF should remain print-friendly, so the design uses
+# restrained fills, borders, typography, and high-contrast text.
+#
+# Visual principle 11:
+# Tables are retained because they are the correct structure for
+# audit/reference data. Cards are used for scanning, not as a
+# replacement for detailed records.
+#
+# Visual principle 12:
+# Facility identity should be immediately visible at the start of
+# each facility detail section.
+#
+# Visual principle 13:
+# Portfolio status should be visible without forcing users to read
+# every row in the all-facilities table.
+#
+# Visual principle 14:
+# Detection evidence should remain attributable to the realtime
+# payload and should not be inferred from presentation formatting.
+#
+# Visual principle 15:
+# The design should tolerate N/A values without broken alignment.
+#
+# Visual principle 16:
+# Long facility names and descriptions should wrap inside Paragraphs
+# instead of overflowing fixed-width table cells.
+#
+# Visual principle 17:
+# Page headers and footers should reinforce the FlowSense identity
+# while remaining unobtrusive.
+#
+# Visual principle 18:
+# Section headings should create a clear reading hierarchy.
+#
+# Visual principle 19:
+# Data-quality notes should appear near the end of reports and remain
+# visibly separate from operational KPIs.
+#
+# Visual principle 20:
+# The visual system must not modify the calculation functions that
+# determine variance, baseline context, anomaly state, or loss.
+#
+# Visual principle 21:
+# Realtime anomaly evidence remains authoritative.
+#
+# Visual principle 22:
+# Persisted anomalies and alerts remain database-backed.
+#
+# Visual principle 23:
+# Baselines remain contextual operating profiles.
+#
+# Visual principle 24:
+# Facility targets remain current comparison values.
+#
+# Visual principle 25:
+# The PDF is a presentation layer over the existing report package.
+#
+# Visual principle 26:
+# No visual element should suggest a measurement that is not present
+# in the underlying report package.
+#
+# Visual principle 27:
+# Portfolio cards should summarize counts, not invent portfolio
+# consumption totals.
+#
+# Visual principle 28:
+# Realtime snapshot timing should remain visible.
+#
+# Visual principle 29:
+# Historical reading timestamps should remain visible where used.
+#
+# Visual principle 30:
+# IoT device and sensor metadata remain part of the facility report.
+#
+# Visual principle 31:
+# The final report should be suitable for both screen viewing and
+# PDF export/printing.
+#
+# Visual principle 32:
+# Subtle whitespace is used to separate concepts rather than relying
+# only on borders.
+#
+# Visual principle 33:
+# The visual hierarchy should remain understandable in grayscale.
+#
+# Visual principle 34:
+# Labels are written in plain operational language.
+#
+# Visual principle 35:
+# Tables use consistent padding to improve scanning.
+#
+# Visual principle 36:
+# The same visual language is shared by single-facility and portfolio
+# reports to make the two report types feel like one product.
+#
+# Visual principle 37:
+# The cover is intentionally minimal so the report feels like a
+# product-generated intelligence document rather than a raw export.
+#
+# Visual principle 38:
+# The portfolio cover emphasizes scope and facility count.
+#
+# Visual principle 39:
+# Facility covers emphasize facility identity and reporting period.
+#
+# Visual principle 40:
+# The design layer is intentionally implemented with standard
+# ReportLab primitives so deployment remains straightforward.
+#
+# Visual principle 41:
+# No browser, JavaScript, external font, or image asset is required
+# by this visual upgrade.
+#
+# Visual principle 42:
+# The module remains compatible with the existing BytesIO PDF
+# generation functions.
+#
+# Visual principle 43:
+# The existing report generator remains the source of truth for data.
+#
+# Visual principle 44:
+# The new visual helpers can be extended independently.
+#
+# Visual principle 45:
+# Future charts can consume the same report dictionaries without
+# changing the database access layer.
+#
+# Visual principle 46:
+# Future chart rendering should preserve the same status palette.
+#
+# Visual principle 47:
+# Future map rendering should preserve facility identity semantics.
+#
+# Visual principle 48:
+# Future branding should be isolated to the theme constants.
+#
+# Visual principle 49:
+# Future typography changes should be isolated to style factories.
+#
+# Visual principle 50:
+# Future layout changes should not alter calculation semantics.
+#
+# End of visual design system.
+
 # HELPERS
 # ============================================================
 
@@ -71,41 +1167,58 @@ def _header_footer(canvas, doc):
 
     width, height = A4
 
+    # Modern FlowSense header
+    canvas.setFillColor(FS_NAVY)
+    canvas.roundRect(
+        14 * mm,
+        height - 16 * mm,
+        width - 28 * mm,
+        8 * mm,
+        2.5 * mm,
+        fill=1,
+        stroke=0,
+    )
+
     canvas.setFont("Helvetica-Bold", 9)
+    canvas.setFillColor(FS_WHITE)
     canvas.drawString(
-        18 * mm,
-        height - 12 * mm,
+        19 * mm,
+        height - 12.2 * mm,
         "FlowSense"
     )
 
-    canvas.setFont("Helvetica", 8)
+    canvas.setFont("Helvetica", 7.5)
+    canvas.setFillColor(HexColor("#DCE8F7"))
     canvas.drawRightString(
-        width - 18 * mm,
-        height - 12 * mm,
-        "Energy & Water Intelligence Report"
+        width - 19 * mm,
+        height - 12.2 * mm,
+        "ENERGY & WATER INTELLIGENCE"
     )
 
-    canvas.setStrokeColor(colors.HexColor("#D9DEE7"))
+    canvas.setStrokeColor(FS_BORDER)
+    canvas.setLineWidth(0.6)
     canvas.line(
         18 * mm,
-        height - 15 * mm,
+        height - 19 * mm,
         width - 18 * mm,
-        height - 15 * mm,
+        height - 19 * mm,
     )
 
-    canvas.setFont("Helvetica", 8)
-    canvas.setFillColor(colors.HexColor("#667085"))
-
+    # Footer
+    canvas.setFont("Helvetica", 7)
+    canvas.setFillColor(FS_MUTED)
     canvas.drawString(
         18 * mm,
-        10 * mm,
-        "FlowSense — Generated from measured system data"
+        9 * mm,
+        "FlowSense  •  Measured telemetry  •  Detection  •  Reconciliation"
     )
 
+    canvas.setFont("Helvetica-Bold", 7)
+    canvas.setFillColor(FS_NAVY)
     canvas.drawRightString(
         width - 18 * mm,
-        10 * mm,
-        f"Page {doc.page}"
+        9 * mm,
+        f"{doc.page:02d}"
     )
 
     canvas.restoreState()
@@ -128,8 +1241,8 @@ def _table(data, widths=None, header=True):
             "GRID",
             (0, 0),
             (-1, -1),
-            0.4,
-            colors.HexColor("#D9DEE7"),
+            0.35,
+            FS_BORDER,
         ),
         (
             "VALIGN",
@@ -150,28 +1263,34 @@ def _table(data, widths=None, header=True):
             8,
         ),
         (
+            "TEXTCOLOR",
+            (0, 0),
+            (-1, -1),
+            FS_INK,
+        ),
+        (
             "LEFTPADDING",
             (0, 0),
             (-1, -1),
-            6,
+            7,
         ),
         (
             "RIGHTPADDING",
             (0, 0),
             (-1, -1),
-            6,
+            7,
         ),
         (
             "TOPPADDING",
             (0, 0),
             (-1, -1),
-            5,
+            6,
         ),
         (
             "BOTTOMPADDING",
             (0, 0),
             (-1, -1),
-            5,
+            6,
         ),
     ]
 
@@ -181,7 +1300,13 @@ def _table(data, widths=None, header=True):
                 "BACKGROUND",
                 (0, 0),
                 (-1, 0),
-                colors.HexColor("#F2F4F7"),
+                FS_NAVY,
+            ),
+            (
+                "TEXTCOLOR",
+                (0, 0),
+                (-1, 0),
+                FS_WHITE,
             ),
             (
                 "FONTNAME",
@@ -189,8 +1314,28 @@ def _table(data, widths=None, header=True):
                 (-1, 0),
                 "Helvetica-Bold",
             ),
+            (
+                "LINEBELOW",
+                (0, 0),
+                (-1, 0),
+                1.2,
+                FS_BLUE,
+            ),
         ])
 
+    # Subtle alternating row treatment improves scanability while
+    # preserving the existing tabular structure and data semantics.
+    if header and len(data) > 2:
+        for row_index in range(1, len(data)):
+            if row_index % 2 == 0:
+                style.append(
+                    (
+                        "BACKGROUND",
+                        (0, row_index),
+                        (-1, row_index),
+                        FS_SURFACE,
+                    )
+                )
     table.setStyle(TableStyle(style))
     return table
 
@@ -1088,6 +2233,12 @@ def _render_portfolio_health_summary(
         )
     )
 
+    _fs_render_portfolio_health_cards(
+        story,
+        counts,
+        total,
+    )
+
     health_rows = [
         [
             "Healthy",
@@ -1538,7 +2689,7 @@ def generate_facility_pdf(report):
         fontSize=10,
         leading=15,
         alignment=TA_CENTER,
-        textColor=colors.HexColor("#667085"),
+        textColor=FS_MUTED,
         spaceAfter=18,
     )
 
@@ -1550,7 +2701,7 @@ def generate_facility_pdf(report):
         leading=18,
         spaceBefore=12,
         spaceAfter=8,
-        textColor=colors.HexColor("#101828"),
+        textColor=FS_INK,
     )
 
     body_style = ParagraphStyle(
@@ -1566,7 +2717,7 @@ def generate_facility_pdf(report):
         parent=styles["BodyText"],
         fontSize=8,
         leading=11,
-        textColor=colors.HexColor("#667085"),
+        textColor=FS_MUTED,
     )
 
     story = []
@@ -1816,6 +2967,17 @@ def generate_facility_pdf(report):
         water_expected,
     )
 
+    # Refresh the executive cards after variance values are known.
+    _fs_render_realtime_cards(
+        story,
+        energy_actual,
+        energy_expected,
+        energy_variance,
+        water_actual,
+        water_expected,
+        water_variance,
+    )
+
     energy_loss_display = (
         _loss_or_variance_display(
             realtime_data,
@@ -1870,6 +3032,14 @@ def generate_facility_pdf(report):
         ],
     ]
 
+    _fs_render_summary_panel(
+        story,
+        detection.get("facility_status") or _normalized_facility_status(realtime),
+        int(_num(detection.get("anomaly_count"), 0)),
+        energy_variance,
+        water_variance,
+    )
+
     story.append(
         Paragraph(
             "The realtime section represents the latest live telemetry snapshot and is independent of the selected historical reporting period.",
@@ -1888,6 +3058,13 @@ def generate_facility_pdf(report):
                 34 * mm,
             ],
         )
+    )
+
+    _fs_render_efficiency_cards(
+        story,
+        efficiency.get("energy_score"),
+        efficiency.get("water_score"),
+        detection.get("facility_status") or _normalized_facility_status(realtime),
     )
 
     efficiency_table = [
@@ -2508,7 +3685,7 @@ def generate_portfolio_pdf(report):
         fontSize=10,
         leading=15,
         alignment=TA_CENTER,
-        textColor=colors.HexColor("#667085"),
+        textColor=FS_MUTED,
         spaceAfter=18,
     )
 
@@ -2520,7 +3697,7 @@ def generate_portfolio_pdf(report):
         leading=18,
         spaceBefore=12,
         spaceAfter=8,
-        textColor=colors.HexColor("#101828"),
+        textColor=FS_INK,
     )
 
     body_style = ParagraphStyle(
@@ -2536,7 +3713,7 @@ def generate_portfolio_pdf(report):
         parent=styles["BodyText"],
         fontSize=8,
         leading=11,
-        textColor=colors.HexColor("#667085"),
+        textColor=FS_MUTED,
     )
 
     story = []
@@ -2751,6 +3928,15 @@ def generate_portfolio_pdf(report):
         )
     )
 
+    _fs_render_portfolio_snapshot_cards(
+        story,
+        realtime_count,
+        len(facilities),
+        realtime_anomaly_count,
+        persisted_anomaly_count,
+        alert_count,
+    )
+
     _render_portfolio_health_summary(
         story,
         heading_style,
@@ -2942,6 +4128,11 @@ def generate_portfolio_pdf(report):
                 f"{index}. {facility_name}",
                 heading_style,
             )
+        )
+
+        _fs_facility_identity_card(
+            story,
+            facility,
         )
 
         story.append(
@@ -3219,3 +4410,619 @@ def generate_portfolio_pdf(report):
 
     buffer.seek(0)
     return buffer
+
+
+# ============================================================
+# VISUAL DESIGN EXTENSION NOTES
+# ============================================================
+# The following constants/documentation describe the intended UI
+# hierarchy for future contributors. They are kept in source rather
+# than in an external design document so the PDF generator remains
+# self-documenting.
+#
+# Layer 01 — Brand
+# FlowSense uses a dark navy structural color for identity, headers,
+# and high-level navigation. It should remain stable across reports.
+#
+# Layer 02 — Resource identity
+# Energy is represented primarily with blue.
+# Water is represented primarily with cyan/teal.
+#
+# Layer 03 — Operational state
+# Healthy is green.
+# Attention is amber.
+# Critical is red.
+#
+# Layer 04 — Contextual analytics
+# Purple is reserved for contextual analytics such as persisted
+# record counts, deviation context, and supporting analytics.
+#
+# Layer 05 — Neutral data
+# Gray tones are reserved for labels, metadata, methodology, and
+# unavailable values.
+#
+# Layout rule 01:
+# Cover pages should have generous whitespace.
+#
+# Layout rule 02:
+# Operational KPI cards should appear before detailed tables.
+#
+# Layout rule 03:
+# Tables should use consistent row height and padding.
+#
+# Layout rule 04:
+# Section headings should be visually stronger than body copy.
+#
+# Layout rule 05:
+# Explanatory notes should never overpower measurements.
+#
+# Layout rule 06:
+# Facility identity should be repeated when a report contains
+# multiple facilities so pages remain understandable when printed.
+#
+# Layout rule 07:
+# Portfolio summaries should communicate counts, not fabricate
+# portfolio consumption.
+#
+# Layout rule 08:
+# Realtime and historical data should have explicit labels.
+#
+# Layout rule 09:
+# Baselines should be described as configured profiles.
+#
+# Layout rule 10:
+# Targets should be described as comparison values.
+#
+# Layout rule 11:
+# Anomaly evidence should remain traceable to the detection payload.
+#
+# Layout rule 12:
+# Persisted anomalies should remain traceable to database records.
+#
+# Layout rule 13:
+# Reconciliation loss should remain traceable to authoritative
+# pipeline output.
+#
+# Layout rule 14:
+# Positive variance without loss evidence should remain variance.
+#
+# Layout rule 15:
+# N/A must remain visually obvious.
+#
+# Layout rule 16:
+# The design must not imply that an unavailable value is zero.
+#
+# Layout rule 17:
+# The design must remain usable when facility names are long.
+#
+# Layout rule 18:
+# The design must remain usable when descriptions are long.
+#
+# Layout rule 19:
+# The design must remain usable when anomaly tables contain many rows.
+#
+# Layout rule 20:
+# The design must remain usable when there are no anomalies.
+#
+# Layout rule 21:
+# The design must remain usable when realtime data is unavailable.
+#
+# Layout rule 22:
+# The design must remain usable when historical data is unavailable.
+#
+# Layout rule 23:
+# The design must remain usable when a facility has no devices.
+#
+# Layout rule 24:
+# The design must remain usable when a facility has no sensors.
+#
+# Layout rule 25:
+# The design must remain usable when baseline records are missing.
+#
+# Layout rule 26:
+# The design must remain usable when facility targets are missing.
+#
+# Layout rule 27:
+# The design must remain usable when expected values are missing.
+#
+# Layout rule 28:
+# The design must remain usable when efficiency scores are missing.
+#
+# Layout rule 29:
+# The design must remain usable when anomaly confidence is missing.
+#
+# Layout rule 30:
+# The design must remain usable when anomaly source is missing.
+#
+# Layout rule 31:
+# The design must remain usable when anomaly area is missing.
+#
+# Layout rule 32:
+# The design must remain usable when status is missing.
+#
+# Layout rule 33:
+# The design must remain usable when a facility report contains
+# a data_error field.
+#
+# Layout rule 34:
+# Data errors should be displayed as information, not silently
+# converted into healthy state.
+#
+# Layout rule 35:
+# A report should never hide data-quality limitations.
+#
+# Layout rule 36:
+# A report should make the distinction between measured and inferred
+# values explicit.
+#
+# Layout rule 37:
+# A report should not visually overstate precision.
+#
+# Layout rule 38:
+# Two decimal places remain the default for measured values.
+#
+# Layout rule 39:
+# Percentages use one decimal place when used for confidence or
+# efficiency scores.
+#
+# Layout rule 40:
+# Status badges use uppercase text for quick scanning.
+#
+# Layout rule 41:
+# Status badge colors are paired with text so the report remains
+# interpretable without color.
+#
+# Layout rule 42:
+# Tables use a dark header to create strong column separation.
+#
+# Layout rule 43:
+# Alternating row backgrounds are intentionally subtle.
+#
+# Layout rule 44:
+# Borders remain light to reduce visual noise.
+#
+# Layout rule 45:
+# The header bar is compact so it does not consume useful page area.
+#
+# Layout rule 46:
+# Footer metadata is compact and repeatable.
+#
+# Layout rule 47:
+# Page numbers use two digits for consistent visual width.
+#
+# Layout rule 48:
+# The report remains A4-first because the existing generator uses A4.
+#
+# Layout rule 49:
+# Existing margins remain unchanged unless explicitly redesigned.
+#
+# Layout rule 50:
+# All visual components are implemented using standard ReportLab
+# primitives already used by the existing module.
+#
+# Extension 01:
+# Add a monthly trend chart using report["monthly_summaries"].
+#
+# Extension 02:
+# Add a daily consumption chart using report["energy"]["readings"].
+#
+# Extension 03:
+# Add a water trend chart using report["water"]["readings"].
+#
+# Extension 04:
+# Add a baseline envelope chart using configured baseline rows.
+#
+# Extension 05:
+# Add a reconciliation bridge using authoritative reconciliation
+# records only.
+#
+# Extension 06:
+# Add an anomaly timeline using persisted anomaly timestamps.
+#
+# Extension 07:
+# Add an alert timeline using persisted alert timestamps.
+#
+# Extension 08:
+# Add a sensor inventory card for the IoT infrastructure section.
+#
+# Extension 09:
+# Add device protocol summary counts.
+#
+# Extension 10:
+# Add a facility comparison chart to the portfolio report while
+# retaining separate facility values.
+#
+# Extension 11:
+# Add a facility status distribution visual.
+#
+# Extension 12:
+# Add a realtime availability indicator.
+#
+# Extension 13:
+# Add a reporting-period completeness indicator.
+#
+# Extension 14:
+# Add a baseline coverage indicator.
+#
+# Extension 15:
+# Add a reconciliation coverage indicator.
+#
+# Extension 16:
+# Add an alert closure indicator from persisted records.
+#
+# Extension 17:
+# Add a device connectivity summary.
+#
+# Extension 18:
+# Add a sensor coverage summary.
+#
+# Extension 19:
+# Add a data freshness panel.
+#
+# Extension 20:
+# Add a report provenance panel.
+#
+# Engineering constraint 01:
+# Do not move database access into the PDF renderer.
+#
+# Engineering constraint 02:
+# Do not calculate anomaly status from presentation-layer values.
+#
+# Engineering constraint 03:
+# Do not calculate physical loss from target variance.
+#
+# Engineering constraint 04:
+# Do not aggregate facility telemetry into a portfolio total unless
+# the upstream report contract explicitly defines a safe aggregation.
+#
+# Engineering constraint 05:
+# Do not replace missing values with zero.
+#
+# Engineering constraint 06:
+# Do not mutate the report dictionaries while rendering.
+#
+# Engineering constraint 07:
+# Do not modify historical timestamps for presentation.
+#
+# Engineering constraint 08:
+# Do not modify realtime timestamps for presentation.
+#
+# Engineering constraint 09:
+# Do not silently drop anomaly evidence.
+#
+# Engineering constraint 10:
+# Do not silently drop alerts.
+#
+# Engineering constraint 11:
+# Do not silently drop device metadata.
+#
+# Engineering constraint 12:
+# Do not silently drop sensor metadata.
+#
+# Engineering constraint 13:
+# Keep all existing report sections available.
+#
+# Engineering constraint 14:
+# Keep the original report generation entry points unchanged.
+#
+# Engineering constraint 15:
+# Keep BytesIO return values unchanged.
+#
+# Engineering constraint 16:
+# Keep ReportLab as the rendering engine.
+#
+# Engineering constraint 17:
+# Keep the output as a PDF.
+#
+# Engineering constraint 18:
+# Keep facility and portfolio reports visually related.
+#
+# Engineering constraint 19:
+# Keep data semantics separate from visual semantics.
+#
+# Engineering constraint 20:
+# Keep the code deployable in the existing FlowSense backend.
+#
+# QA scenario 01:
+# Facility with healthy realtime status and positive energy variance.
+#
+# Expected visual result:
+# Healthy badge remains green while the variance remains informational.
+#
+# QA scenario 02:
+# Facility with critical realtime anomaly.
+#
+# Expected visual result:
+# Critical badge is red and anomaly evidence appears near the top.
+#
+# QA scenario 03:
+# Facility with attention realtime anomaly.
+#
+# Expected visual result:
+# Attention badge is amber and detection evidence remains visible.
+#
+# QA scenario 04:
+# Facility with no realtime anomaly.
+#
+# Expected visual result:
+# Healthy/no-anomaly state appears with contextual KPI cards.
+#
+# QA scenario 05:
+# Facility with authoritative energy loss.
+#
+# Expected visual result:
+# Loss evidence is labelled as estimated loss.
+#
+# QA scenario 06:
+# Facility with positive target variance but no loss evidence.
+#
+# Expected visual result:
+# Value is labelled excess consumption/variance.
+#
+# QA scenario 07:
+# Facility with no historical readings.
+#
+# Expected visual result:
+# Historical section clearly reports unavailable records.
+#
+# QA scenario 08:
+# Portfolio with mixed healthy, attention, and critical facilities.
+#
+# Expected visual result:
+# Summary cards expose counts before detailed tables.
+#
+# QA scenario 09:
+# Portfolio with no realtime snapshots.
+#
+# Expected visual result:
+# Snapshot count is 0/N and no fabricated realtime metrics appear.
+#
+# QA scenario 10:
+# Portfolio with persisted anomalies but no current realtime anomaly.
+#
+# Expected visual result:
+# Persisted anomaly count remains separate from realtime status.
+#
+# QA scenario 11:
+# Portfolio with realtime anomaly but no persisted anomaly record.
+#
+# Expected visual result:
+# Realtime anomaly remains visible and is not counted as persisted.
+#
+# QA scenario 12:
+# Facility with missing expected energy.
+#
+# Expected visual result:
+# Target and variance render as N/A.
+#
+# QA scenario 13:
+# Facility with missing expected water.
+#
+# Expected visual result:
+# Target and variance render as N/A.
+#
+# QA scenario 14:
+# Facility with missing efficiency scores.
+#
+# Expected visual result:
+# Efficiency cards render N/A.
+#
+# QA scenario 15:
+# Facility with many sensors.
+#
+# Expected visual result:
+# Sensor table remains readable and can split across pages.
+#
+# QA scenario 16:
+# Facility with many anomaly records.
+#
+# Expected visual result:
+# Existing 30-record display limit remains intact.
+#
+# QA scenario 17:
+# Facility with many alerts.
+#
+# Expected visual result:
+# Existing 30-record display limit remains intact.
+#
+# QA scenario 18:
+# Facility with long anomaly description.
+#
+# Expected visual result:
+# Paragraph/table wrapping prevents horizontal overflow.
+#
+# QA scenario 19:
+# Facility with long facility name.
+#
+# Expected visual result:
+# Identity card wraps the name safely.
+#
+# QA scenario 20:
+# Portfolio with long facility names.
+#
+# Expected visual result:
+# Facility column wraps safely.
+#
+# QA scenario 21:
+# Portfolio with data errors.
+#
+# Expected visual result:
+# Data-error count appears in summary and detail.
+#
+# QA scenario 22:
+# Portfolio with zero facilities.
+#
+# Expected visual result:
+# Empty state is explicit and no fake rows are created.
+#
+# QA scenario 23:
+# Baseline profile with 168 rows.
+#
+# Expected visual result:
+# Existing complete baseline table remains available.
+#
+# QA scenario 24:
+# Baseline profile with no records.
+#
+# Expected visual result:
+# No baseline rows are fabricated.
+#
+# QA scenario 25:
+# Device metadata absent.
+#
+# Expected visual result:
+# Device section remains present without fabricated inventory.
+#
+# QA scenario 26:
+# Sensor metadata absent.
+#
+# Expected visual result:
+# Sensor section remains present without fabricated inventory.
+#
+# QA scenario 27:
+# Reconciliation absent.
+#
+# Expected visual result:
+# Reconciliation count remains zero and loss evidence remains
+# governed by the realtime pipeline.
+#
+# QA scenario 28:
+# Realtime payload unavailable.
+#
+# Expected visual result:
+# Historical and configured information remain usable.
+#
+# QA scenario 29:
+# Realtime payload contains explicit facility_status.
+#
+# Expected visual result:
+# Explicit status takes precedence over inferred display status.
+#
+# QA scenario 30:
+# Realtime payload contains primary_anomaly.
+#
+# Expected visual result:
+# Primary anomaly details are surfaced directly.
+#
+# QA scenario 31:
+# Realtime payload uses nested detection data.
+#
+# Expected visual result:
+# Normalization helpers preserve the existing payload compatibility.
+#
+# QA scenario 32:
+# Realtime payload uses nested data fields.
+#
+# Expected visual result:
+# Fallback extraction continues to work.
+#
+# QA scenario 33:
+# Realtime payload uses anomaly_type and anomaly_count.
+#
+# Expected visual result:
+# Primary anomaly normalization remains available.
+#
+# QA scenario 34:
+# Realtime payload contains zero authoritative loss.
+#
+# Expected visual result:
+# Report displays no loss evidence rather than estimated loss.
+#
+# QA scenario 35:
+# Realtime payload contains positive authoritative loss.
+#
+# Expected visual result:
+# Report displays estimated loss with correct unit.
+#
+# QA scenario 36:
+# Expected value equals zero.
+#
+# Expected visual result:
+# Percentage variance safely remains N/A rather than dividing by zero.
+#
+# QA scenario 37:
+# Actual value is zero.
+#
+# Expected visual result:
+# Negative variance is preserved and displayed.
+#
+# QA scenario 38:
+# Actual and expected values are missing.
+#
+# Expected visual result:
+# Variance remains N/A.
+#
+# QA scenario 39:
+# Timestamp cannot be parsed.
+#
+# Expected visual result:
+# Original timestamp text is retained by formatter fallback.
+#
+# QA scenario 40:
+# Report is generated at a different time.
+#
+# Expected visual result:
+# Realtime snapshot timestamp remains tied to the supplied payload.
+#
+# QA scenario 41:
+# Historical latest reading is older than realtime.
+#
+# Expected visual result:
+# Report explicitly separates persisted and realtime timestamps.
+#
+# QA scenario 42:
+# Facility target differs from weekly baseline average.
+#
+# Expected visual result:
+# Both values remain separately labelled.
+#
+# QA scenario 43:
+# Weekly baseline has thresholds.
+#
+# Expected visual result:
+# Lower and upper thresholds remain visible in the baseline table.
+#
+# QA scenario 44:
+# Weekly baseline has no thresholds.
+#
+# Expected visual result:
+# Missing thresholds display N/A.
+#
+# QA scenario 45:
+# Facility status field is absent but no anomaly exists.
+#
+# Expected visual result:
+# Display defaults to Healthy through existing normalization.
+#
+# QA scenario 46:
+# Facility status field says warning.
+#
+# Expected visual result:
+# Display normalizes warning to Attention.
+#
+# QA scenario 47:
+# Facility status field says crit.
+#
+# Expected visual result:
+# Display normalizes crit to Critical.
+#
+# QA scenario 48:
+# Facility status field says normal.
+#
+# Expected visual result:
+# Display normalizes normal to Healthy.
+#
+# QA scenario 49:
+# Portfolio facility status is derived from anomaly severity.
+#
+# Expected visual result:
+# Critical severity maps to Critical, other active anomaly maps
+# to Attention.
+#
+# QA scenario 50:
+# Portfolio health count is displayed.
+#
+# Expected visual result:
+# Counts are transparent and non-ranking.
+#
+# End of QA design notes.
