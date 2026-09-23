@@ -195,6 +195,1308 @@ def _table(data, widths=None, header=True):
     return table
 
 
+
+# ============================================================
+# CORRECTED REPORT HELPERS
+# ============================================================
+# These helpers extend the original report engine without
+# removing any of the existing FlowSense report capabilities.
+# They keep realtime detection, facility targets, configured
+# baselines, persisted records, and IoT metadata distinct.
+# ============================================================
+
+def _safe_difference(actual, expected):
+    """
+    Return actual - expected when both values are available.
+    A missing value remains None so the report can render N/A
+    instead of silently treating missing data as zero.
+    """
+    if actual is None or expected is None:
+        return None
+
+    try:
+        return float(actual) - float(expected)
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_percentage(actual, expected):
+    """
+    Return percentage variance relative to expected.
+
+    This is a reporting helper only. It does not create an
+    anomaly classification and does not replace the backend
+    detection engine.
+    """
+    if actual is None or expected in (None, 0):
+        return None
+
+    try:
+        return (
+            (float(actual) - float(expected))
+            / abs(float(expected))
+        ) * 100.0
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+
+
+def _format_variance(value, unit=""):
+    """
+    Format a signed variance while preserving N/A for missing
+    values.
+    """
+    if value is None:
+        return "N/A"
+
+    try:
+        return f"{float(value):+,.2f} {unit}".strip()
+    except (TypeError, ValueError):
+        return f"{value} {unit}".strip()
+
+
+def _extract_primary_anomaly(realtime):
+    """
+    Normalize the different realtime detection payload shapes
+    used by FlowSense.
+
+    The backend detection result remains authoritative.
+    """
+    realtime = realtime or {}
+
+    detection = realtime.get("detection") or {}
+    data = realtime.get("data") or {}
+
+    primary = detection.get("primary_anomaly")
+
+    if not primary:
+        primary = data.get("primary_anomaly")
+
+    if isinstance(primary, str):
+        return {
+            "anomaly_type": primary,
+            "severity": (
+                detection.get("severity")
+                or data.get("severity")
+            ),
+            "confidence_percent": (
+                detection.get("confidence_percent")
+                or data.get("confidence_percent")
+            ),
+            "likely_source": (
+                detection.get("likely_source")
+                or data.get("likely_source")
+            ),
+            "area_name": (
+                detection.get("area_name")
+                or data.get("area_name")
+            ),
+            "description": (
+                detection.get("description")
+                or data.get("description")
+            ),
+        }
+
+    if isinstance(primary, dict):
+        return primary
+
+    anomaly_count = _num(
+        detection.get("anomaly_count"),
+        0.0,
+    )
+
+    anomaly_type = (
+        detection.get("anomaly_type")
+        or data.get("anomaly_type")
+    )
+
+    if anomaly_count > 0 or anomaly_type:
+        return {
+            "anomaly_type": anomaly_type,
+            "severity": (
+                detection.get("severity")
+                or data.get("severity")
+            ),
+            "confidence_percent": (
+                detection.get("confidence_percent")
+                or data.get("confidence_percent")
+            ),
+            "likely_source": (
+                detection.get("likely_source")
+                or data.get("likely_source")
+            ),
+            "area_name": (
+                detection.get("area_name")
+                or data.get("area_name")
+            ),
+            "description": (
+                detection.get("description")
+                or data.get("description")
+            ),
+        }
+
+    return None
+
+
+def _normalized_facility_status(realtime, facility=None):
+    """
+    Determine the display status from the authoritative realtime
+    detection payload when available.
+
+    This helper does not invent an anomaly from a KPI deviation.
+    A facility can therefore have a KPI variance while remaining
+    Healthy if the detection engine reports no anomaly.
+    """
+    realtime = realtime or {}
+    facility = facility or {}
+
+    detection = realtime.get("detection") or {}
+    data = realtime.get("data") or {}
+
+    explicit = (
+        detection.get("facility_status")
+        or data.get("facility_status")
+    )
+
+    if explicit:
+        normalized = str(explicit).strip().lower()
+
+        if normalized in ("critical", "crit"):
+            return "Critical"
+
+        if normalized in (
+            "attention",
+            "warning",
+            "warn",
+            "needs attention",
+        ):
+            return "Attention"
+
+        if normalized in (
+            "healthy",
+            "normal",
+            "ok",
+            "good",
+            "active",
+        ):
+            return "Healthy"
+
+    primary = _extract_primary_anomaly(realtime)
+
+    if primary:
+        severity = str(
+            primary.get("severity") or ""
+        ).strip().lower()
+
+        if severity == "critical":
+            return "Critical"
+
+        return "Attention"
+
+    anomaly_count = _num(
+        detection.get("anomaly_count"),
+        0.0,
+    )
+
+    if anomaly_count > 0:
+        severity = str(
+            detection.get("severity")
+            or data.get("severity")
+            or ""
+        ).strip().lower()
+
+        if severity == "critical":
+            return "Critical"
+
+        return "Attention"
+
+    return _text(
+        facility.get("status"),
+        "Healthy",
+    ).title()
+
+
+def _detection_status_text(realtime):
+    """
+    Produce a short human-readable detection statement.
+
+    It deliberately does not classify positive target variance as
+    an anomaly.
+    """
+    status = _normalized_facility_status(realtime)
+
+    if status == "Critical":
+        return (
+            "Critical realtime detection is active. "
+            "Review the latest anomaly evidence and source."
+        )
+
+    if status == "Attention":
+        return (
+            "A realtime condition requires attention. "
+            "Review the latest detection evidence."
+        )
+
+    return (
+        "No realtime anomaly detected in the latest "
+        "FlowSense detection snapshot."
+    )
+
+
+def _authoritative_loss(
+    realtime_data,
+    actual,
+    expected,
+    resource,
+):
+    """
+    Return an authoritative loss value only when supplied by the
+    detection/reconciliation pipeline.
+
+    A positive target variance is NOT relabelled as physical loss.
+    """
+    realtime_data = realtime_data or {}
+
+    if resource == "energy":
+        key = "estimated_energy_loss_kwh"
+    else:
+        key = "estimated_water_loss_kl"
+
+    pipeline_value = realtime_data.get(key)
+
+    if pipeline_value is None:
+        return None
+
+    return _num(
+        pipeline_value,
+        None,
+    )
+
+
+def _loss_or_variance_display(
+    realtime_data,
+    actual,
+    expected,
+    resource,
+):
+    """
+    Return both the display value and its semantic label.
+
+    If FlowSense supplied an authoritative loss value, the report
+    can safely call it Estimated Loss. Otherwise the report calls
+    the positive difference Excess Consumption / Variance.
+    """
+    loss = _authoritative_loss(
+        realtime_data,
+        actual,
+        expected,
+        resource,
+    )
+
+    if loss is not None:
+        unit = (
+            "kWh"
+            if resource == "energy"
+            else "kL"
+        )
+
+        # A zero authoritative loss means the detection/reconciliation
+        # pipeline did not identify measurable loss. Do not present
+        # that as an "Estimated Loss" value in the report.
+        if loss <= 0:
+            return (
+                "None detected",
+                "No Loss Evidence",
+                True,
+            )
+
+        return (
+            f"{_fmt(loss)} {unit}",
+            f"Estimated Loss ({unit})",
+            True,
+        )
+
+    variance = _safe_difference(
+        actual,
+        expected,
+    )
+
+    if variance is not None and variance > 0:
+        unit = (
+            "kWh"
+            if resource == "energy"
+            else "kL"
+        )
+
+        return (
+            _fmt(variance),
+            f"Excess Consumption ({unit})",
+            False,
+        )
+
+    return (
+        "N/A",
+        "Loss Evidence",
+        False,
+    )
+
+
+def _baseline_summary(
+    baseline_rows,
+    value_label,
+    unit,
+):
+    """
+    Build a compact summary from the configured weekly hourly
+    baseline profile while preserving the original detailed table.
+    """
+    baseline_rows = baseline_rows or []
+
+    expected = []
+    lower = []
+    upper = []
+
+    for item in baseline_rows:
+        expected_value = _num(
+            item.get("expected_value"),
+            None,
+        )
+
+        lower_value = _num(
+            item.get("lower_threshold"),
+            None,
+        )
+
+        upper_value = _num(
+            item.get("upper_threshold"),
+            None,
+        )
+
+        if expected_value is not None:
+            expected.append(expected_value)
+
+        if lower_value is not None:
+            lower.append(lower_value)
+
+        if upper_value is not None:
+            upper.append(upper_value)
+
+    average_expected = (
+        sum(expected) / len(expected)
+        if expected
+        else None
+    )
+
+    minimum_expected = (
+        min(expected)
+        if expected
+        else None
+    )
+
+    maximum_expected = (
+        max(expected)
+        if expected
+        else None
+    )
+
+    minimum_lower = (
+        min(lower)
+        if lower
+        else None
+    )
+
+    maximum_upper = (
+        max(upper)
+        if upper
+        else None
+    )
+
+    return {
+        "label": value_label,
+        "unit": unit,
+        "record_count": len(baseline_rows),
+        "average_expected": average_expected,
+        "minimum_expected": minimum_expected,
+        "maximum_expected": maximum_expected,
+        "minimum_lower_threshold": minimum_lower,
+        "maximum_upper_threshold": maximum_upper,
+    }
+
+
+def _facility_kpi_deviation(
+    facility_report,
+):
+    """
+    Return energy and water percentage deviations for portfolio
+    review.
+
+    These values are ranking aids for visibility only. They do not
+    create or replace anomaly classifications.
+    """
+    facility = (
+        facility_report.get("facility")
+        or {}
+    )
+
+    realtime = (
+        facility_report.get("realtime")
+        or {}
+    )
+
+    data = (
+        realtime.get("data")
+        or {}
+    )
+
+    energy_actual = _num(
+        data.get("energy_kwh"),
+        None,
+    )
+
+    energy_expected = _num(
+        data.get("expected_energy_kwh"),
+        None,
+    )
+
+    water_actual = _num(
+        data.get("water_kl"),
+        None,
+    )
+
+    water_expected = _num(
+        data.get("expected_water_kl"),
+        None,
+    )
+
+    return {
+        "facility_code": _text(
+            facility.get("facility_code")
+        ),
+        "facility_name": _text(
+            facility.get("facility_name")
+            or facility.get("facility_code")
+        ),
+        "energy_actual": energy_actual,
+        "energy_expected": energy_expected,
+        "energy_variance": _safe_difference(
+            energy_actual,
+            energy_expected,
+        ),
+        "energy_percent": _safe_percentage(
+            energy_actual,
+            energy_expected,
+        ),
+        "water_actual": water_actual,
+        "water_expected": water_expected,
+        "water_variance": _safe_difference(
+            water_actual,
+            water_expected,
+        ),
+        "water_percent": _safe_percentage(
+            water_actual,
+            water_expected,
+        ),
+        "status": _normalized_facility_status(
+            realtime,
+            facility,
+        ),
+    }
+
+
+def _portfolio_health_counts(facilities):
+    """
+    Count facility display states from realtime detection.
+
+    This produces a transparent portfolio health summary without
+    making any evaluative recommendation.
+    """
+    counts = {
+        "Healthy": 0,
+        "Attention": 0,
+        "Critical": 0,
+    }
+
+    for facility_report in facilities or []:
+        facility = (
+            facility_report.get("facility")
+            or {}
+        )
+
+        realtime = (
+            facility_report.get("realtime")
+            or {}
+        )
+
+        status = _normalized_facility_status(
+            realtime,
+            facility,
+        )
+
+        if status not in counts:
+            status = "Healthy"
+
+        counts[status] += 1
+
+    return counts
+
+
+def _portfolio_attention_rows(facilities):
+    """
+    Build rows for the small portfolio attention/critical table.
+
+    Only realtime detection evidence is included here. KPI variance
+    alone does not place a facility into this table.
+    """
+    rows = []
+
+    for facility_report in facilities or []:
+        facility = (
+            facility_report.get("facility")
+            or {}
+        )
+
+        realtime = (
+            facility_report.get("realtime")
+            or {}
+        )
+
+        status = _normalized_facility_status(
+            realtime,
+            facility,
+        )
+
+        if status == "Healthy":
+            continue
+
+        primary = _extract_primary_anomaly(
+            realtime
+        ) or {}
+
+        rows.append({
+            "facility_code": _text(
+                facility.get("facility_code")
+            ),
+            "facility_name": _text(
+                facility.get("facility_name")
+                or facility.get("facility_code")
+            ),
+            "status": status,
+            "anomaly_type": _text(
+                primary.get("anomaly_type"),
+                "Realtime condition",
+            ),
+            "severity": _text(
+                primary.get("severity"),
+                status,
+            ),
+            "confidence": primary.get(
+                "confidence_percent"
+            ),
+            "source": _text(
+                primary.get("likely_source")
+                or primary.get("source")
+            ),
+            "area": _text(
+                primary.get("area_name")
+            ),
+            "description": _text(
+                primary.get("description")
+            ),
+        })
+
+    return rows
+
+
+def _top_kpi_deviation_rows(
+    facilities,
+    resource,
+    limit=5,
+):
+    """
+    Return the largest positive target deviations for a resource.
+
+    This is deliberately labelled as KPI deviation and is not an
+    anomaly detector.
+    """
+    values = []
+
+    for facility_report in facilities or []:
+        deviation = _facility_kpi_deviation(
+            facility_report
+        )
+
+        if resource == "energy":
+            percentage = deviation[
+                "energy_percent"
+            ]
+            actual = deviation[
+                "energy_actual"
+            ]
+            expected = deviation[
+                "energy_expected"
+            ]
+        else:
+            percentage = deviation[
+                "water_percent"
+            ]
+            actual = deviation[
+                "water_actual"
+            ]
+            expected = deviation[
+                "water_expected"
+            ]
+
+        if percentage is None:
+            continue
+
+        if percentage <= 0:
+            continue
+
+        values.append({
+            "facility_code": deviation[
+                "facility_code"
+            ],
+            "facility_name": deviation[
+                "facility_name"
+            ],
+            "actual": actual,
+            "expected": expected,
+            "percentage": percentage,
+            "status": deviation[
+                "status"
+            ],
+        })
+
+    values.sort(
+        key=lambda item: item["percentage"],
+        reverse=True,
+    )
+
+    return values[:limit]
+
+
+def _render_status_note(
+    story,
+    small_style,
+    realtime,
+):
+    """
+    Add the explicit detection-status explanation to a report.
+    """
+    story.append(
+        Paragraph(
+            f"<b>Detection status:</b> "
+            f"{_detection_status_text(realtime)}",
+            small_style,
+        )
+    )
+
+
+def _render_target_baseline_summary(
+    story,
+    heading_style,
+    body_style,
+    small_style,
+    facility,
+    energy,
+    water,
+    realtime_data,
+):
+    """
+    Add a compact comparison before the original full baseline
+    tables.
+
+    Facility targets and configured hourly baselines remain visibly
+    separate.
+    """
+    energy_target = _num(
+        realtime_data.get(
+            "expected_energy_kwh"
+        ),
+        _num(
+            facility.get(
+                "expected_energy_kwh"
+            ),
+            None,
+        ),
+    )
+
+    water_target = _num(
+        realtime_data.get(
+            "expected_water_kl"
+        ),
+        _num(
+            facility.get(
+                "expected_water_kl"
+            ),
+            None,
+        ),
+    )
+
+    energy_summary = _baseline_summary(
+        energy.get("baselines") or [],
+        "Energy",
+        "kWh",
+    )
+
+    water_summary = _baseline_summary(
+        water.get("baselines") or [],
+        "Water",
+        "kL",
+    )
+
+    story.append(
+        Paragraph(
+            "Target vs Configured Baseline",
+            heading_style,
+        )
+    )
+
+    story.append(
+        Paragraph(
+            "Facility targets are the current comparison values "
+            "shown with realtime telemetry. Configured hourly "
+            "baselines are the stored weekly operating profile "
+            "used for contextual detection. They are not the same "
+            "metric.",
+            body_style,
+        )
+    )
+
+    rows = [
+        [
+            "Resource",
+            "Facility Target",
+            "Configured Avg.",
+            "Configured Range",
+            "Baseline Records",
+        ],
+        [
+            "Energy",
+            (
+                f"{_fmt(energy_target)} kWh"
+                if energy_target is not None
+                else "N/A"
+            ),
+            (
+                f"{_fmt(energy_summary['average_expected'])} kWh"
+                if energy_summary["average_expected"]
+                is not None
+                else "N/A"
+            ),
+            (
+                f"{_fmt(energy_summary['minimum_expected'])}–"
+                f"{_fmt(energy_summary['maximum_expected'])} kWh"
+                if (
+                    energy_summary["minimum_expected"]
+                    is not None
+                    and energy_summary["maximum_expected"]
+                    is not None
+                )
+                else "N/A"
+            ),
+            str(
+                energy_summary["record_count"]
+            ),
+        ],
+        [
+            "Water",
+            (
+                f"{_fmt(water_target)} kL"
+                if water_target is not None
+                else "N/A"
+            ),
+            (
+                f"{_fmt(water_summary['average_expected'])} kL"
+                if water_summary["average_expected"]
+                is not None
+                else "N/A"
+            ),
+            (
+                f"{_fmt(water_summary['minimum_expected'])}–"
+                f"{_fmt(water_summary['maximum_expected'])} kL"
+                if (
+                    water_summary["minimum_expected"]
+                    is not None
+                    and water_summary["maximum_expected"]
+                    is not None
+                )
+                else "N/A"
+            ),
+            str(
+                water_summary["record_count"]
+            ),
+        ],
+    ]
+
+    story.append(
+        _table(
+            rows,
+            widths=[
+                28 * mm,
+                33 * mm,
+                36 * mm,
+                43 * mm,
+                25 * mm,
+            ],
+        )
+    )
+
+    story.append(
+        Paragraph(
+            "Interpretation: a difference from the facility target "
+            "is a KPI variance. It is not treated as a physical loss "
+            "unless the reconciliation or detection pipeline provides "
+            "authoritative loss evidence.",
+            small_style,
+        )
+    )
+
+
+def _render_portfolio_health_summary(
+    story,
+    heading_style,
+    body_style,
+    small_style,
+    facilities,
+):
+    """
+    Add the portfolio-level health view before the full current
+    status table.
+    """
+    counts = _portfolio_health_counts(
+        facilities
+    )
+
+    total = len(
+        facilities or []
+    )
+
+    story.append(
+        Paragraph(
+            "2. Portfolio Health Summary",
+            heading_style,
+        )
+    )
+
+    story.append(
+        Paragraph(
+            "The following counts describe the latest realtime "
+            "detection state of each facility. They are not a ranking "
+            "of facilities and do not replace persisted database "
+            "records.",
+            body_style,
+        )
+    )
+
+    health_rows = [
+        [
+            "Healthy",
+            "Attention",
+            "Critical",
+            "Realtime Anomalies",
+        ],
+        [
+            str(counts["Healthy"]),
+            str(counts["Attention"]),
+            str(counts["Critical"]),
+            str(
+                counts["Attention"]
+                + counts["Critical"]
+            ),
+        ],
+    ]
+
+    story.append(
+        _table(
+            health_rows,
+            widths=[
+                38 * mm,
+                38 * mm,
+                38 * mm,
+                46 * mm,
+            ],
+        )
+    )
+
+    story.append(
+        Paragraph(
+            f"Facilities represented: <b>{total}</b>. "
+            f"Realtime snapshots are evaluated independently from "
+            f"persisted anomaly and alert records.",
+            small_style,
+        )
+    )
+
+
+def _render_portfolio_attention_table(
+    story,
+    heading_style,
+    body_style,
+    small_style,
+    facilities,
+):
+    """
+    Surface all realtime Attention/Critical facilities near the
+    beginning of the portfolio report.
+    """
+    rows = _portfolio_attention_rows(
+        facilities
+    )
+
+    story.append(
+        Paragraph(
+            "3. Critical & Attention Facilities",
+            heading_style,
+        )
+    )
+
+    story.append(
+        Paragraph(
+            "Only facilities with an active realtime detection "
+            "condition are listed here. A target variance alone does "
+            "not move a facility into this table.",
+            body_style,
+        )
+    )
+
+    if not rows:
+        story.append(
+            Paragraph(
+                "No realtime Attention or Critical facilities "
+                "were present in this snapshot.",
+                body_style,
+            )
+        )
+        return
+
+    table_rows = [
+        [
+            "Facility",
+            "Status",
+            "Anomaly",
+            "Severity",
+            "Confidence",
+            "Source / Area",
+        ]
+    ]
+
+    for item in rows:
+        source_area = (
+            f"{item['source']} / {item['area']}"
+            if (
+                item["source"] != "N/A"
+                or item["area"] != "N/A"
+            )
+            else "N/A"
+        )
+
+        confidence = item[
+            "confidence"
+        ]
+
+        table_rows.append([
+            (
+                f"<b>{item['facility_code']}</b><br/>"
+                f"{item['facility_name']}"
+            ),
+            item["status"],
+            item["anomaly_type"],
+            item["severity"],
+            (
+                f"{_fmt(confidence, 1)} %"
+                if confidence is not None
+                else "N/A"
+            ),
+            source_area,
+        ])
+
+    story.append(
+        _table(
+            table_rows,
+            widths=[
+                38 * mm,
+                25 * mm,
+                31 * mm,
+                24 * mm,
+                25 * mm,
+                37 * mm,
+            ],
+        )
+    )
+
+    story.append(
+        Paragraph(
+            "Detection details shown here come directly from the "
+            "latest realtime detection payload.",
+            small_style,
+        )
+    )
+
+
+def _render_portfolio_kpi_deviations(
+    story,
+    heading_style,
+    body_style,
+    small_style,
+    facilities,
+):
+    """
+    Add a transparent KPI-deviation section. This is deliberately
+    separate from anomaly classification.
+    """
+    story.append(
+        Paragraph(
+            "4. Top KPI Deviations",
+            heading_style,
+        )
+    )
+
+    story.append(
+        Paragraph(
+            "These are positive differences from the configured "
+            "facility target in the latest realtime snapshot. "
+            "They are informational and should not be interpreted "
+            "as detected anomalies unless the detection engine "
+            "reports one.",
+            body_style,
+        )
+    )
+
+    energy_rows = [
+        [
+            "Facility",
+            "Actual kWh",
+            "Target kWh",
+            "Deviation",
+            "Detection Status",
+        ]
+    ]
+
+    for item in _top_kpi_deviation_rows(
+        facilities,
+        "energy",
+        5,
+    ):
+        energy_rows.append([
+            item["facility_code"],
+            _fmt(item["actual"]),
+            _fmt(item["expected"]),
+            f"{_fmt(item['percentage'], 1)} %",
+            item["status"],
+        ])
+
+    water_rows = [
+        [
+            "Facility",
+            "Actual kL",
+            "Target kL",
+            "Deviation",
+            "Detection Status",
+        ]
+    ]
+
+    for item in _top_kpi_deviation_rows(
+        facilities,
+        "water",
+        5,
+    ):
+        water_rows.append([
+            item["facility_code"],
+            _fmt(item["actual"]),
+            _fmt(item["expected"]),
+            f"{_fmt(item['percentage'], 1)} %",
+            item["status"],
+        ])
+
+    if len(energy_rows) == 1:
+        energy_rows.append([
+            "No positive deviation",
+            "N/A",
+            "N/A",
+            "N/A",
+            "N/A",
+        ])
+
+    if len(water_rows) == 1:
+        water_rows.append([
+            "No positive deviation",
+            "N/A",
+            "N/A",
+            "N/A",
+            "N/A",
+        ])
+
+    story.append(
+        Paragraph(
+            "Energy",
+            small_style,
+        )
+    )
+
+    story.append(
+        _table(
+            energy_rows,
+            widths=[
+                34 * mm,
+                28 * mm,
+                28 * mm,
+                30 * mm,
+                40 * mm,
+            ],
+        )
+    )
+
+    story.append(Spacer(1, 4 * mm))
+
+    story.append(
+        Paragraph(
+            "Water",
+            small_style,
+        )
+    )
+
+    story.append(
+        _table(
+            water_rows,
+            widths=[
+                34 * mm,
+                28 * mm,
+                28 * mm,
+                30 * mm,
+                40 * mm,
+            ],
+        )
+    )
+
+
+def _render_facility_detection_card(
+    story,
+    heading_style,
+    body_style,
+    small_style,
+    realtime,
+):
+    """
+    Add a dedicated realtime detection section to the individual
+    facility report.
+    """
+    status = _normalized_facility_status(
+        realtime
+    )
+
+    primary = _extract_primary_anomaly(
+        realtime
+    )
+
+    story.append(
+        Paragraph(
+            "Realtime Detection Status",
+            heading_style,
+        )
+    )
+
+    if not primary:
+        story.append(
+            Paragraph(
+                "<b>Healthy / No Realtime Anomaly Detected</b>",
+                body_style,
+            )
+        )
+
+        story.append(
+            Paragraph(
+                "Current KPI differences remain visible in the "
+                "performance section as informational variance. "
+                "The latest FlowSense detection payload reports no "
+                "realtime anomaly for this snapshot.",
+                small_style,
+            )
+        )
+
+        return
+
+    rows = [
+        [
+            "Field",
+            "Realtime Detection Evidence",
+        ],
+        [
+            "Facility Status",
+            status,
+        ],
+        [
+            "Anomaly Type",
+            _text(
+                primary.get(
+                    "anomaly_type"
+                ),
+                "Realtime condition",
+            ),
+        ],
+        [
+            "Severity",
+            _text(
+                primary.get(
+                    "severity"
+                ),
+                status,
+            ),
+        ],
+        [
+            "Confidence",
+            (
+                f"{_fmt(primary.get('confidence_percent'), 1)} %"
+                if primary.get(
+                    "confidence_percent"
+                ) is not None
+                else "N/A"
+            ),
+        ],
+        [
+            "Likely Source",
+            _text(
+                primary.get("likely_source")
+                or primary.get("source")
+            ),
+        ],
+        [
+            "Area",
+            _text(
+                primary.get(
+                    "area_name"
+                )
+            ),
+        ],
+        [
+            "Description",
+            _text(
+                primary.get(
+                    "description"
+                )
+            ),
+        ],
+    ]
+
+    story.append(
+        _table(
+            rows,
+            widths=[
+                50 * mm,
+                105 * mm,
+            ],
+        )
+    )
+
+    story.append(
+        Paragraph(
+            "This status is derived from the realtime detection "
+            "payload and is separate from persisted PostgreSQL "
+            "anomaly records.",
+            small_style,
+        )
+    )
+
+
 # ============================================================
 # PDF GENERATOR
 # ============================================================
@@ -490,10 +1792,10 @@ def generate_facility_pdf(report):
     # Positive variance means consumption is above expected.
     # Negative variance means consumption is below expected.
     #
-    # Estimated loss remains the authoritative value supplied
-    # by the FlowSense detection/reconciliation pipeline.
-    # If the pipeline does not provide a value, a positive
-    # variance is used as a fallback estimate.
+    # Authoritative loss remains the value supplied by the FlowSense
+    # detection/reconciliation pipeline. A positive target variance
+    # is reported as excess consumption/variance when no authoritative
+    # physical-loss value is supplied.
     # --------------------------------------------------------
 
     energy_pipeline_loss = realtime_data.get(
@@ -504,15 +1806,33 @@ def generate_facility_pdf(report):
         "estimated_water_loss_kl"
     )
 
-    energy_variance = energy_actual - energy_expected
-    water_variance = water_actual - water_expected
+    energy_variance = _safe_difference(
+        energy_actual,
+        energy_expected,
+    )
 
-    if energy_pipeline_loss is None:
-        energy_loss = max(0.0, energy_variance)
-    else:
-        energy_loss = _num(energy_pipeline_loss)
+    water_variance = _safe_difference(
+        water_actual,
+        water_expected,
+    )
 
-    water_loss = max(0.0, water_variance)
+    energy_loss_display = (
+        _loss_or_variance_display(
+            realtime_data,
+            energy_actual,
+            energy_expected,
+            "energy",
+        )
+    )
+
+    water_loss_display = (
+        _loss_or_variance_display(
+            realtime_data,
+            water_actual,
+            water_expected,
+            "water",
+        )
+    )
 
     realtime_table = [
         [
@@ -520,21 +1840,33 @@ def generate_facility_pdf(report):
             "Actual",
             "Expected",
             "Variance",
-            "Estimated Loss",
+            "Loss / Variance Evidence",
         ],
         [
             "Energy",
             f"{_fmt(energy_actual)} kWh",
             f"{_fmt(energy_expected)} kWh",
-            f"{energy_variance:+,.2f} kWh",
-            f"{_fmt(energy_loss)} kWh",
+            _format_variance(
+                energy_variance,
+                "kWh",
+            ),
+            (
+                f"{energy_loss_display[0]} "
+                f"({energy_loss_display[1]})"
+            ),
         ],
         [
             "Water",
             f"{_fmt(water_actual)} kL",
             f"{_fmt(water_expected)} kL",
-            f"{water_variance:+,.2f} kL",
-            f"{_fmt(water_loss)} kL",
+            _format_variance(
+                water_variance,
+                "kL",
+            ),
+            (
+                f"{water_loss_display[0]} "
+                f"({water_loss_display[1]})"
+            ),
         ],
     ]
 
@@ -601,6 +1933,14 @@ def generate_facility_pdf(report):
         )
     )
 
+    _render_facility_detection_card(
+        story,
+        heading_style,
+        body_style,
+        small_style,
+        realtime,
+    )
+
     # ========================================================
     # OPERATING CONDITIONS
     # ========================================================
@@ -659,6 +1999,14 @@ def generate_facility_pdf(report):
             conditions_table,
             widths=[70 * mm, 85 * mm],
         )
+    )
+
+    story.append(Spacer(1, 3 * mm))
+
+    _render_status_note(
+        story,
+        small_style,
+        realtime,
     )
 
     # ========================================================
@@ -843,8 +2191,28 @@ def generate_facility_pdf(report):
         )
     )
 
+    story.append(
+        Paragraph(
+            "The summary below is the operational baseline context. "
+            "The complete 168-row weekly profile is retained for audit/reference and "
+            "does not represent additional readings from the selected 24h period.",
+            small_style,
+        )
+    )
+
     energy_baselines = energy.get("baselines") or []
     water_baselines = water.get("baselines") or []
+
+    _render_target_baseline_summary(
+        story,
+        heading_style,
+        body_style,
+        small_style,
+        facility,
+        energy,
+        water,
+        realtime_data,
+    )
 
     story.append(
         Paragraph(
@@ -861,6 +2229,14 @@ def generate_facility_pdf(report):
                 "(24 hours × 7 days). These records describe expected operating "
                 "levels and thresholds and are not restricted to the selected "
                 "reporting period.",
+                small_style,
+            )
+        )
+
+        story.append(
+            Paragraph(
+                "Baseline values provide operating context. They do not "
+                "automatically create a physical-loss value.",
                 small_style,
             )
         )
@@ -1050,7 +2426,9 @@ def generate_facility_pdf(report):
         "Persisted anomaly and alert sections only report database records available for the selected period; realtime detections are reported separately.",
         "Missing historical records are not replaced with fabricated values.",
         "Efficiency values shown in the realtime section originate from the FlowSense detection pipeline.",
-        "Estimated losses use the values supplied by the live detection/reconciliation pipeline; if unavailable, only positive actual-versus-expected variance is used as a fallback.",
+        "Authoritative estimated losses are shown only when supplied by the live detection/reconciliation pipeline. A zero authoritative value is shown as no loss evidence; positive actual-versus-expected differences without authoritative loss evidence are labelled variance/excess consumption rather than physical loss.",
+        "Facility targets and configured weekly hourly baselines are shown separately because they serve different reporting purposes.",
+        "Realtime KPI deviation is not converted into a realtime anomaly unless the FlowSense detection payload reports an anomaly.",
     ]
 
     for note in notes:
@@ -1304,6 +2682,15 @@ def generate_portfolio_pdf(report):
         )
     )
 
+    story.append(
+        Paragraph(
+            "Snapshot note: the realtime portfolio table represents "
+            "the latest available snapshot captured when this PDF "
+            "was generated. It is not a frozen historical dataset.",
+            small_style,
+        )
+    )
+
     story.append(PageBreak())
 
     # ========================================================
@@ -1364,13 +2751,37 @@ def generate_portfolio_pdf(report):
         )
     )
 
+    _render_portfolio_health_summary(
+        story,
+        heading_style,
+        body_style,
+        small_style,
+        facilities,
+    )
+
+    _render_portfolio_attention_table(
+        story,
+        heading_style,
+        body_style,
+        small_style,
+        facilities,
+    )
+
+    _render_portfolio_kpi_deviations(
+        story,
+        heading_style,
+        body_style,
+        small_style,
+        facilities,
+    )
+
     # ========================================================
     # ALL-FACILITIES TABLE
     # ========================================================
 
     story.append(
         Paragraph(
-            "2. All-Facilities Current Status",
+            "5. All-Facilities Current Status",
             heading_style,
         )
     )
@@ -1410,10 +2821,9 @@ def generate_portfolio_pdf(report):
             facility.get("facility_code")
         )
 
-        status = _text(
-            detection.get("facility_status")
-            if realtime
-            else facility.get("status")
+        status = _normalized_facility_status(
+            realtime,
+            facility,
         )
 
         energy_value = realtime_data.get(
@@ -1426,6 +2836,15 @@ def generate_portfolio_pdf(report):
         anomaly_count = detection.get(
             "anomaly_count"
         )
+
+        if anomaly_count is None:
+            anomaly_count = (
+                1
+                if _extract_primary_anomaly(
+                    realtime
+                )
+                else 0
+            )
 
         facility_rows.append([
             Paragraph(
@@ -1481,7 +2900,7 @@ def generate_portfolio_pdf(report):
 
     story.append(
         Paragraph(
-            "3. Facility Detail",
+            "6. Facility Detail",
             heading_style,
         )
     )
@@ -1504,6 +2923,11 @@ def generate_portfolio_pdf(report):
         realtime_data = realtime.get("data") or {}
         detection = realtime.get("detection") or {}
         efficiency = detection.get("efficiency") or {}
+
+        normalized_status = _normalized_facility_status(
+            realtime,
+            facility,
+        )
 
         facility_name = _text(
             facility.get("facility_name")
@@ -1603,11 +3027,8 @@ def generate_portfolio_pdf(report):
             ],
             [
                 "Facility Status",
-                _text(
-                    detection.get("facility_status")
-                    if realtime
-                    else facility.get("status")
-                ),
+                normalized_status,
+                
                 "Realtime Anomalies",
                 str(
                     int(
@@ -1634,9 +3055,12 @@ def generate_portfolio_pdf(report):
             )
         )
 
-        primary = detection.get(
-            "primary_anomaly"
-        ) or {}
+        primary = (
+            _extract_primary_anomaly(
+                realtime
+            )
+            or {}
+        )
 
         if primary:
             story.append(
@@ -1745,7 +3169,7 @@ def generate_portfolio_pdf(report):
 
     story.append(
         Paragraph(
-            "4. Data Availability & Calculation Notes",
+            "7. Data Availability & Calculation Notes",
             heading_style,
         )
     )
@@ -1759,6 +3183,10 @@ def generate_portfolio_pdf(report):
         "Realtime anomaly counts describe the latest live detection state and are separate from persisted database anomaly records.",
         "Persisted anomaly and alert counts are limited to the selected reporting period.",
         "The report does not infer historical totals when historical database records are unavailable.",
+        "Portfolio health counts are derived from the latest realtime detection state and are not a ranking of facilities.",
+        "Top KPI deviation tables are informational and do not replace the backend anomaly detector.",
+        "Positive actual-versus-target variance is not labelled as physical loss unless authoritative loss evidence is present.",
+        "The portfolio current-status table is a point-in-time realtime snapshot; later downloads can legitimately contain different telemetry values.",
     ]
 
     for note in notes:
