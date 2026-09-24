@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  BrowserRouter,
   Routes,
   Route,
   NavLink,
   Navigate,
+  Outlet,
   useNavigate,
   useParams
 } from "react-router-dom";
@@ -47,11 +47,16 @@ import {
   YAxis,
   Tooltip
 } from "recharts";
-
+import Login from "./pages/Login";
+import Register from "./pages/Register";
+import ResetPassword from "./pages/ResetPassword";
+import ProtectedRoute from "./components/ProtectedRoute";
 import { api } from "./services/api";
 import RealtimeOverview from "./RealtimeOverview";
 import { useFlowSense } from "./context/FlowSenseContext";
+import { useAuth } from "./auth/AuthContext";
 import "./App.css";
+
 
 const navItems = [
   ["/", "Overview", Gauge],
@@ -198,8 +203,15 @@ function Ring({ value, water = false, label }) {
    SHELL
 ========================= */
 
-function Shell({ anomalies, children }) {
+function Shell({ anomalies }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+
+  const handleLogout = async () => {
+    await logout();
+    navigate("/login", { replace: true });
+  };
 
   return (
     <div className="app">
@@ -277,15 +289,32 @@ function Shell({ anomalies, children }) {
         </div>
 
         <div className="user">
-          <div className="avatar">AG</div>
+  <div className="avatar">
+    {(user?.name || "User")
+      .split(" ")
+      .map((part) => part[0])
+      .join("")
+      .slice(0, 2)
+      .toUpperCase()}
+  </div>
 
-          <div>
-            <b>Admin</b>
-            <small>
-              FlowSense Control Center
-            </small>
-          </div>
-        </div>
+  <div className="user-info">
+    <b>{user?.name || "User"}</b>
+    <small>
+      {user?.email || "FlowSense Control Center"}
+    </small>
+  </div>
+
+  <button
+    type="button"
+    className="logout-button"
+    onClick={handleLogout}
+    title="Logout"
+    aria-label="Logout"
+  >
+    Logout
+  </button>
+</div>
       </aside>
 
       <main className="main">
@@ -313,7 +342,7 @@ function Shell({ anomalies, children }) {
           </button>
         </header>
 
-        {children}
+        <Outlet />
       </main>
     </div>
   );
@@ -4169,124 +4198,136 @@ function App() {
   };
 
   return (
-    <Shell anomalies={alerts}>
-      <Routes>
-        <Route
-          path="/"
-          element={
-            <RealtimeOverview
-              facilities={facilityList}
-              anomalies={alerts}
-              selected={selected}
-              setSelected={setSelected}
-              onRefresh={refresh}
-            />
-          }
-        />
+    <Routes>
+      <Route
+        path="/login"
+        element={<Login />}
+      />
 
-        <Route
-          path="/legacy-overview"
-          element={
-            <Overview
-              facilities={facilityList}
-              anomalies={alerts}
-              selected={selected}
-              setSelected={setSelected}
-              onRefresh={refresh}
-            />
-          }
-        />
+      <Route
+        path="/register"
+        element={<Register />}
+      />
+      <Route path="/reset-password" element={<ResetPassword />} />
+      <Route element={<ProtectedRoute />}>
+        <Route element={<Shell anomalies={alerts} />}>
+          <Route
+            path="/"
+            element={
+              <RealtimeOverview
+                facilities={facilityList}
+                anomalies={alerts}
+                selected={selected}
+                setSelected={setSelected}
+                onRefresh={refresh}
+              />
+            }
+          />
 
-        <Route
-          path="/facilities"
-          element={
-            <Facilities
-              facilities={facilityList}
-              anomalies={alerts}
-            />
-          }
-        />
+          <Route
+            path="/legacy-overview"
+            element={
+              <Overview
+                facilities={facilityList}
+                anomalies={alerts}
+                selected={selected}
+                setSelected={setSelected}
+                onRefresh={refresh}
+              />
+            }
+          />
 
-        <Route
-          path="/facilities/:code"
-          element={
-            <Detail
-              facilities={facilityList}
-              anomalies={alerts}
-            />
-          }
-        />
+          <Route
+            path="/facilities"
+            element={
+              <Facilities
+                facilities={facilityList}
+                anomalies={alerts}
+              />
+            }
+          />
 
-        <Route
-          path="/energy"
-          element={
-            <Resource
-              type="energy"
-              facilities={facilityList}
-            />
-          }
-        />
+          <Route
+            path="/facilities/:code"
+            element={
+              <Detail
+                facilities={facilityList}
+                anomalies={alerts}
+              />
+            }
+          />
 
-        <Route
-          path="/water"
-          element={
-            <Resource
-              type="water"
-              facilities={facilityList}
-            />
-          }
-        />
+          <Route
+            path="/energy"
+            element={
+              <Resource
+                type="energy"
+                facilities={facilityList}
+              />
+            }
+          />
 
-        <Route
-          path="/alerts"
-          element={
-            <Alerts
-              anomalies={alerts}
-            />
-          }
-        />
+          <Route
+            path="/water"
+            element={
+              <Resource
+                type="water"
+                facilities={facilityList}
+              />
+            }
+          />
 
-        <Route
-          path="/analytics"
-          element={
-            <Analytics
-              facilities={facilityList}
-            />
-          }
-        />
+          <Route
+            path="/alerts"
+            element={
+              <Alerts
+                anomalies={alerts}
+              />
+            }
+          />
 
-        <Route
-          path="/ai-insights"
-          element={
-            <AIInsights
-              anomalies={alerts}
-            />
-          }
-        />
+          <Route
+            path="/analytics"
+            element={
+              <Analytics
+                facilities={facilityList}
+              />
+            }
+          />
 
-        <Route
-          path="/reports"
-          element={<Reports />}
-        />
+          <Route
+            path="/ai-insights"
+            element={
+              <AIInsights
+                anomalies={alerts}
+              />
+            }
+          />
 
-        <Route
-          path="/devices"
-          element={<Devices />}
-        />
+          <Route
+            path="/reports"
+            element={<Reports />}
+          />
 
-        <Route
-          path="/settings"
-          element={<SettingsPage />}
-        />
+          <Route
+            path="/devices"
+            element={<Devices />}
+          />
 
-        <Route
-          path="*"
-          element={
-            <Navigate to="/" replace />
-          }
-        />
-      </Routes>
-    </Shell>
+          <Route
+            path="/settings"
+            element={<SettingsPage />}
+          />
+        </Route>
+      </Route>
+
+      <Route
+        path="*"
+        element={
+          <Navigate to="/login" replace />
+        }
+      />
+    </Routes>
   );
 }
 

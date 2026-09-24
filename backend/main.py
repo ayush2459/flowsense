@@ -26,7 +26,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
-
+from auth_routes import router as auth_router
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
@@ -332,7 +332,7 @@ app = FastAPI(
     ),
     lifespan=lifespan,
 )
-
+app.include_router(auth_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -1741,15 +1741,15 @@ async def broadcast_live_reading(
     Normal live flow:
 
         Simulator
-            â†“
+            ↓
         FastAPI
-            â†“
+            ↓
         In-memory source mapping
-            â†“
+            ↓
         Detection engine
-            â†“
+            ↓
         WebSocket broadcast
-            â†“
+            ↓
         Dashboard
 
     PostgreSQL is NOT touched during normal
@@ -2506,3 +2506,5 @@ def facility_report_ai_analysis(
             status_code=500,
             detail=f"AI report analysis failed: {exc}",
         )
+
+
