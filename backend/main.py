@@ -34,6 +34,8 @@ from sqlalchemy.orm import Session
 
 from database import get_db, engine, SessionLocal
 
+from auth import router as auth_router
+
 from detection_engine import (
     DetectionResult,
     analyze_telemetry,
@@ -339,6 +341,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(auth_router)
 # ============================================================
 # REALTIME REPORT CACHE
 # ============================================================
