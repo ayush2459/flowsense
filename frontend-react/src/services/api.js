@@ -91,17 +91,17 @@ export const api = {
   register: (body) => post("/api/auth/register", { body }),
   login: (body) => post("/api/auth/login", { body }),
   me: async (token) => {
-    const response = await fetch(\`${BASE}/api/auth/me\`, {
+    const response = await fetch(`${BASE}/api/auth/me`, {
       headers: {
         Accept: "application/json",
-        Authorization: \`Bearer ${token}\`
+        Authorization: `Bearer ${token}`
       },
       cache: "no-store"
     });
     if (!response.ok) throw new Error("Authentication session expired.");
     return response.json();
   },
-  googleLoginUrl: () => \`${BASE}/api/auth/google\`,
+  googleLoginUrl: () => `${BASE}/api/auth/google`,
   /*
    * Portfolio
    */
