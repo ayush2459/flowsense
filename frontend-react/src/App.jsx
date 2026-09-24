@@ -6,7 +6,8 @@ import {
   NavLink,
   Navigate,
   useNavigate,
-  useParams
+  useParams,
+  useLocation
 } from "react-router-dom";
 
 import {
@@ -49,6 +50,9 @@ import {
 } from "recharts";
 
 import { api } from "./services/api";
+import { useAuth } from "./AuthContext";
+import AuthPage, { GoogleCallback } from "./AuthPage";
+import { FlowSenseProvider } from "./context/FlowSenseContext";
 import RealtimeOverview from "./RealtimeOverview";
 import { useFlowSense } from "./context/FlowSenseContext";
 import "./App.css";
@@ -4142,7 +4146,7 @@ function SettingsPage() {
    APP
 ========================= */
 
-function App() {
+function DashboardApp() {
   const {
     facilityList,
     alerts,
@@ -4287,6 +4291,37 @@ function App() {
         />
       </Routes>
     </Shell>
+  );
+}
+
+function App() {
+  const { isAuthenticated, loading } = useAuth();
+  const location = useLocation();
+
+  if (location.pathname === "/auth/callback") {
+    return <GoogleCallback />;
+  }
+
+  if (loading) {
+    return (
+      <div className="auth-callback">
+        <div>
+          <span className="auth-spinner" />
+          <h2>Loading FlowSense</h2>
+          <p>Checking your account session...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <AuthPage />;
+  }
+
+  return (
+    <FlowSenseProvider>
+      <DashboardApp />
+    </FlowSenseProvider>
   );
 }
 
