@@ -29,12 +29,13 @@ from fastapi import (
 
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.sessions import SessionMiddleware
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from database import get_db, engine, SessionLocal
 
-from auth import router as auth_router
+from auth import router as auth_router, AUTH_SECRET
 
 from detection_engine import (
     DetectionResult,
@@ -340,6 +341,13 @@ app.add_middleware(
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
+)
+
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=AUTH_SECRET or "flowsense-development-session-secret-change-me",
+    same_site="lax",
+    https_only=False,
 )
 
 app.include_router(auth_router)
