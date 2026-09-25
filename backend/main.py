@@ -18,6 +18,7 @@ from ollama_service import generate_report_analysis
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, Optional
+from device_routes import router as device_router
 
 from fastapi import (
     FastAPI,
@@ -333,6 +334,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.include_router(auth_router)
+app.include_router(device_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
