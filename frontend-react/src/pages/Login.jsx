@@ -8,9 +8,13 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
+import { GoogleLogin } from "@react-oauth/google";
 
 import AuthLayout from "../components/AuthLayout";
 import { useAuth } from "../auth/AuthContext";
+
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
 
 export default function Login() {
   const navigate = useNavigate();
@@ -28,6 +32,8 @@ export default function Login() {
 
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] =
+    useState(false);
 
   const handleChange = (event) => {
     const { name, value } = event.target;
@@ -70,6 +76,78 @@ export default function Login() {
     }
   };
 
+  const handleGoogleSuccess = async (credentialResponse) => {
+    if (!credentialResponse?.credential) {
+      setError(
+        "Google authentication did not return a valid credential."
+      );
+      return;
+    }
+
+    setGoogleLoading(true);
+    setError("");
+
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/auth/google`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify({
+            credential: credentialResponse.credential,
+          }),
+        }
+      );
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          data?.detail ||
+            data?.message ||
+            "Unable to sign in with Google."
+        );
+      }
+
+      if (!data?.access_token || !data?.user) {
+        throw new Error(
+          "Google authentication response is incomplete."
+        );
+      }
+
+      localStorage.setItem(
+        "flowsense_access_token",
+        data.access_token
+      );
+
+      localStorage.setItem(
+        "flowsense_user",
+        JSON.stringify(data.user)
+      );
+
+      window.location.replace(
+        location.state?.from?.pathname || "/"
+      );
+    } catch (err) {
+      setError(
+        err.message ||
+          "Unable to sign in with Google. Please try again."
+      );
+    } finally {
+      setGoogleLoading(false);
+    }
+  };
+
+  const handleGoogleError = () => {
+    setGoogleLoading(false);
+    setError(
+      "Google Sign-In was cancelled or could not be completed."
+    );
+  };
+
   return (
     <AuthLayout>
       <div className="auth-card">
@@ -106,7 +184,9 @@ export default function Login() {
           )}
 
           <div className="auth-field">
-            <label htmlFor="email">Email address</label>
+            <label htmlFor="email">
+              Email address
+            </label>
 
             <div className="auth-input-wrapper">
               <Mail size={18} />
@@ -132,7 +212,9 @@ export default function Login() {
               <button
                 type="button"
                 className="auth-text-button"
-                onClick={() => navigate("/reset-password")}
+                onClick={() =>
+                  navigate("/reset-password")
+                }
               >
                 Forgot password?
               </button>
@@ -159,7 +241,9 @@ export default function Login() {
                 type="button"
                 className="auth-password-toggle"
                 onClick={() =>
-                  setShowPassword((current) => !current)
+                  setShowPassword(
+                    (current) => !current
+                  )
                 }
                 aria-label={
                   showPassword
@@ -179,7 +263,7 @@ export default function Login() {
           <button
             className="auth-submit"
             type="submit"
-            disabled={loading}
+            disabled={loading || googleLoading}
           >
             {loading ? (
               <>
@@ -200,18 +284,48 @@ export default function Login() {
             <span />
           </div>
 
-          <button
-            type="button"
-            className="google-button"
-            onClick={() =>
-              setError(
-                "Google Sign-In will be connected next."
-              )
-            }
+          <div
+            className="google-login-wrapper"
+            style={{
+              width: "100%",
+              display: "flex",
+              justifyContent: "center",
+              minHeight: "44px",
+              position: "relative",
+            }}
           >
-            <span className="google-logo">G</span>
-            Continue with Google
-          </button>
+            {googleLoading && (
+              <div
+                className="google-loading-overlay"
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  background: "rgba(255, 255, 255, 0.8)",
+                  borderRadius: "8px",
+                  zIndex: 2,
+                }}
+              >
+                <span className="auth-button-spinner" />
+                <span style={{ marginLeft: "8px" }}>
+                  Signing in with Google...
+                </span>
+              </div>
+            )}
+
+            <GoogleLogin
+              onSuccess={handleGoogleSuccess}
+              onError={handleGoogleError}
+              useOneTap={false}
+              theme="outline"
+              size="large"
+              text="continue_with"
+              shape="rectangular"
+              width="100%"
+            />
+          </div>
         </form>
 
         <div className="auth-card-footer">

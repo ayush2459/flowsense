@@ -1,9 +1,13 @@
+import os
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
+
+from google.auth.transport import requests as google_requests
+from google.oauth2 import id_token
 
 from auth import (
     get_db,
@@ -21,6 +25,10 @@ router = APIRouter(
 )
 
 
+# ---------------------------------------------------------
+# Request / Response Models
+# ---------------------------------------------------------
+
 class RegisterRequest(BaseModel):
     name: str = Field(..., min_length=2, max_length=120)
     email: EmailStr
@@ -36,6 +44,12 @@ class ResetPasswordRequest(BaseModel):
     email: EmailStr
     new_password: str = Field(..., min_length=8, max_length=128)
     confirm_password: str = Field(..., min_length=8, max_length=128)
+
+
+class GoogleLoginRequest(BaseModel):
+    credential: str = Field(..., min_length=1)
+
+
 class UserResponse(BaseModel):
     user_id: str
     name: str
@@ -61,6 +75,10 @@ def user_response(user: User) -> UserResponse:
         created_at=user.created_at,
     )
 
+
+# ---------------------------------------------------------
+# Register
+# ---------------------------------------------------------
 
 @router.post("/register", response_model=TokenResponse)
 def register(
@@ -100,6 +118,11 @@ def register(
         token_type="bearer",
         user=user_response(user),
     )
+
+
+# ---------------------------------------------------------
+# OAuth2 Token Endpoint
+# ---------------------------------------------------------
 
 @router.post("/token", response_model=dict)
 def token(
@@ -144,6 +167,11 @@ def token(
         "token_type": "bearer",
     }
 
+
+# ---------------------------------------------------------
+# Login
+# ---------------------------------------------------------
+
 @router.post("/login", response_model=TokenResponse)
 def login(
     request: LoginRequest,
@@ -180,14 +208,123 @@ def login(
             detail="This account is inactive",
         )
 
-    token = create_access_token(str(user.user_id))
+    access_token = create_access_token(str(user.user_id))
 
     return TokenResponse(
-        access_token=token,
+        access_token=access_token,
         token_type="bearer",
         user=user_response(user),
     )
 
+
+# ---------------------------------------------------------
+# Google Login / Sign-Up
+# ---------------------------------------------------------
+
+@router.post("/google", response_model=TokenResponse)
+def google_login(
+    request: GoogleLoginRequest,
+    db: Session = Depends(get_db),
+):
+    google_client_id = os.getenv("GOOGLE_CLIENT_ID")
+
+    if not google_client_id:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Google authentication is not configured on the server",
+        )
+
+    try:
+        google_user = id_token.verify_oauth2_token(
+            request.credential,
+            google_requests.Request(),
+            google_client_id,
+        )
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Google authentication credential",
+        )
+
+    google_subject_id = google_user.get("sub")
+    email = google_user.get("email")
+    name = google_user.get("name")
+    profile_image = google_user.get("picture")
+
+    if not google_subject_id or not email:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Google account information is incomplete",
+        )
+
+    email = email.lower().strip()
+
+    # First try to find the user using Google's stable
+    # subject ID.
+    user = (
+        db.query(User)
+        .filter(
+            User.google_subject_id == google_subject_id
+        )
+        .first()
+    )
+
+    # If this Google account has not been linked yet,
+    # check whether the email already exists.
+    if not user:
+        user = (
+            db.query(User)
+            .filter(User.email == email)
+            .first()
+        )
+
+    if user:
+        if not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This account is inactive",
+            )
+
+        # Link/update the Google account.
+        user.google_subject_id = google_subject_id
+        user.auth_provider = "google"
+
+        if name:
+            user.name = name.strip()
+
+        if profile_image:
+            user.profile_image = profile_image
+
+    else:
+        # First-time Google user:
+        # automatically create a FlowSense account.
+        user = User(
+            name=(name or email.split("@")[0]).strip(),
+            email=email,
+            password_hash=None,
+            auth_provider="google",
+            google_subject_id=google_subject_id,
+            profile_image=profile_image,
+            is_active=True,
+        )
+
+        db.add(user)
+
+    db.commit()
+    db.refresh(user)
+
+    access_token = create_access_token(str(user.user_id))
+
+    return TokenResponse(
+        access_token=access_token,
+        token_type="bearer",
+        user=user_response(user),
+    )
+
+
+# ---------------------------------------------------------
+# Current User
+# ---------------------------------------------------------
 
 @router.get("/me", response_model=UserResponse)
 def get_me(
@@ -196,11 +333,21 @@ def get_me(
     return user_response(current_user)
 
 
+# ---------------------------------------------------------
+# Logout
+# ---------------------------------------------------------
+
 @router.post("/logout")
 def logout():
     return {
         "message": "Logged out successfully"
     }
+
+
+# ---------------------------------------------------------
+# Reset Password
+# ---------------------------------------------------------
+
 @router.post("/reset-password")
 def reset_password(
     request: ResetPasswordRequest,
@@ -232,7 +379,9 @@ def reset_password(
             detail="This account is inactive",
         )
 
-    user.password_hash = hash_password(request.new_password)
+    user.password_hash = hash_password(
+        request.new_password
+    )
 
     db.commit()
 
