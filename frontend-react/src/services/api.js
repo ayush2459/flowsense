@@ -126,7 +126,8 @@ export const api = {
       )}/water?hours=${Math.max(
         1,
         Number(hours) || 24
-      )}`),
+      )}`
+    ),
 
   reconciliation: (
     facilityCode,
@@ -183,12 +184,14 @@ export const api = {
     `${BASE}/api/reports/facilities/${encode(
       facilityCode
     )}/pdf?period=${encode(period)}`,
+
   reportPortfolioPdfUrl: (
     period = "24h"
   ) =>
     `${BASE}/api/reports/portfolio/pdf?period=${encode(
       period
     )}`,
+
   /*
    * Portfolio historical data
    */
@@ -209,9 +212,9 @@ export const api = {
     ),
 
   /*
-   * Devices
+   * Devices / Asset Management
    */
-  devices: () =>
+  listDevices: () =>
     get("/api/devices"),
 
   deviceHealth: (deviceCode) =>
@@ -219,6 +222,46 @@ export const api = {
       `/api/devices/${encode(
         deviceCode
       )}/health`
+    ),
+
+  deviceRealtimeHealth: (deviceCode) =>
+    get(
+      `/api/devices/${encode(
+        deviceCode
+      )}/realtime-health`
+    ),
+
+  deviceNetwork: (deviceCode) =>
+    get(
+      `/api/devices/${encode(
+        deviceCode
+      )}/network`
+    ),
+
+  deviceUptime: (
+    deviceCode,
+    hours = 24
+  ) =>
+    get(
+      `/api/devices/${encode(
+        deviceCode
+      )}/network/uptime?hours=${Math.max(
+        1,
+        Number(hours) || 24
+      )}`
+    ),
+
+  deviceOfflineEvents: (
+    deviceCode,
+    limit = 50
+  ) =>
+    get(
+      `/api/devices/${encode(
+        deviceCode
+      )}/offline-events?limit=${Math.min(
+        100,
+        Math.max(1, Number(limit) || 50)
+      )}`
     )
 };
 

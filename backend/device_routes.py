@@ -1,6 +1,12 @@
+from device_realtime import broadcast_device_heartbeat
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import (
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    APIRouter,
+)
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -153,6 +159,7 @@ def get_device(
 def device_heartbeat(
     device_code: str,
     payload: dict,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
     """
@@ -244,6 +251,23 @@ def device_heartbeat(
 
     db.commit()
     db.refresh(device)
+
+    background_tasks.add_task(
+        broadcast_device_heartbeat,
+        {
+            "type": "device_heartbeat",
+            "device_code": device.device_code,
+            "device_status": "online",
+            "status": "online",
+            "database_status": device.status,
+            "last_seen_at": device.last_seen_at,
+            "heartbeat_at": now,
+            "network_type": device.network_type,
+            "network_identifier": device.network_identifier,
+            "firmware_version": device.firmware_version,
+            "signal_strength": payload.get("signal_strength"),
+        },
+    )
 
     return {
         "status": "accepted",

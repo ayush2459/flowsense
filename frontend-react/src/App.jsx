@@ -51,7 +51,7 @@ import Login from "./pages/Login";
 import Register from "./pages/Register";
 import ResetPassword from "./pages/ResetPassword";
 import ProtectedRoute from "./components/ProtectedRoute";
-import { api } from "./services/api";
+import { api, API_BASE_URL } from "./services/api";
 import RealtimeOverview from "./RealtimeOverview";
 import { useFlowSense } from "./context/FlowSenseContext";
 import { useAuth } from "./auth/AuthContext";
@@ -4089,80 +4089,1064 @@ function Reports() {
 }
 
 function Devices() {
+  const [devices, setDevices] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [networkFilter, setNetworkFilter] = useState("all");
+  const [selectedDevice, setSelectedDevice] = useState(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailHealth, setDetailHealth] = useState(null);
+  const [detailNetwork, setDetailNetwork] = useState(null);
+  const [detailUptime, setDetailUptime] = useState(null);
+  const [deviceWsStatus, setDeviceWsStatus] = useState("connecting");
+
+  const loadDevices = async (silent = false) => {
+    try {
+      if (silent) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+
+      setError("");
+
+      const response = await api.listDevices();
+
+      const rows = Array.isArray(response)
+        ? response
+        : response?.devices || [];
+
+      setDevices(rows);
+    } catch (err) {
+      console.error("Device inventory error:", err);
+      setError(
+        err?.message ||
+          "Unable to connect to the FlowSense device service."
+      );
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    loadDevices();
+
+    const interval = setInterval(() => {
+      loadDevices(true);
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    let socket = null;
+    let reconnectTimer = null;
+    let stopped = false;
+
+    const websocketUrl = () => {
+      const base = String(API_BASE_URL || "http://localhost:8000");
+      const parsed = new URL(base);
+      parsed.protocol = parsed.protocol === "https:" ? "wss:" : "ws:";
+      parsed.pathname = `${parsed.pathname.replace(/\/$/, "")}/ws/devices`;
+      parsed.search = "";
+      parsed.hash = "";
+      return parsed.toString();
+    };
+
+    const connect = () => {
+      if (stopped) return;
+      setDeviceWsStatus("connecting");
+
+      try {
+        socket = new WebSocket(websocketUrl());
+      } catch (err) {
+        console.error("Device WebSocket creation error:", err);
+        setDeviceWsStatus("disconnected");
+        reconnectTimer = window.setTimeout(connect, 3000);
+        return;
+      }
+
+      socket.onopen = () => setDeviceWsStatus("live");
+
+      socket.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data || "{}");
+          if (message.type === "heartbeat" || message.type === "pong") return;
+          if (message.type !== "device_heartbeat") return;
+
+          setDevices((current) => current.map((device) => {
+            if (device.device_code !== message.device_code) return device;
+            return {
+              ...device,
+              status: message.database_status || "online",
+              realtime_status: message.status || "online",
+              last_seen_at: message.last_seen_at || message.heartbeat_at || device.last_seen_at,
+              network_type: message.network_type || device.network_type,
+              network_identifier: message.network_identifier || device.network_identifier,
+              firmware_version: message.firmware_version || device.firmware_version,
+            };
+          }));
+
+          if (selectedDevice?.device_code === message.device_code) {
+            setDetailHealth((current) => ({
+              ...(current || {}),
+              device_code: message.device_code,
+              status: message.status || "online",
+              database_status: message.database_status || "online",
+              last_seen_at: message.last_seen_at || message.heartbeat_at,
+              checked_at: new Date().toISOString(),
+              seconds_since_last_seen: 0,
+              heartbeat_timeout_seconds: current?.heartbeat_timeout_seconds || 120,
+              offline_reason: null,
+              evidence: null,
+              network_type: message.network_type || current?.network_type,
+              network_identifier: message.network_identifier || current?.network_identifier,
+            }));
+          }
+        } catch (err) {
+          console.error("Device WebSocket message error:", err);
+        }
+      };
+
+      socket.onerror = () => setDeviceWsStatus("disconnected");
+
+      socket.onclose = () => {
+        if (stopped) return;
+        setDeviceWsStatus("reconnecting");
+        reconnectTimer = window.setTimeout(connect, 3000);
+      };
+    };
+
+    connect();
+
+    return () => {
+      stopped = true;
+      if (reconnectTimer) window.clearTimeout(reconnectTimer);
+      if (socket) socket.close();
+    };
+  }, []);
+
+  const openDevice = async (device) => {
+    setSelectedDevice(device);
+    setDetailLoading(true);
+
+    try {
+      const [health, network, uptime] =
+        await Promise.all([
+          api.deviceRealtimeHealth(device.device_code),
+          api.deviceNetwork(device.device_code),
+          api.deviceUptime(
+            device.device_code,
+            24
+          )
+        ]);
+
+      setDetailHealth(health);
+      setDetailNetwork(network);
+      setDetailUptime(uptime);
+    } catch (err) {
+      console.error(
+        "Device detail error:",
+        err
+      );
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!selectedDevice) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const health =
+          await api.deviceRealtimeHealth(
+            selectedDevice.device_code
+          );
+
+        setDetailHealth(health);
+      } catch (err) {
+        console.error(
+          "Realtime device health error:",
+          err
+        );
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [selectedDevice]);
+
+  const getRealtimeStatus = (device) => {
+    const status =
+      device?.realtime_status ||
+      device?.status ||
+      "unknown";
+
+    return String(status).toLowerCase();
+  };
+
+  const filteredDevices = useMemo(() => {
+    const query = search
+      .trim()
+      .toLowerCase();
+
+    return devices.filter((device) => {
+      const realtimeStatus =
+        getRealtimeStatus(device);
+
+      const matchesSearch =
+        !query ||
+        [
+          device.device_code,
+          device.device_name,
+          device.device_model,
+          device.installation_location,
+          device.serial_number,
+          device.network_type
+        ]
+          .filter(Boolean)
+          .some((value) =>
+            String(value)
+              .toLowerCase()
+              .includes(query)
+          );
+
+      const matchesStatus =
+        statusFilter === "all" ||
+        realtimeStatus === statusFilter;
+
+      const network =
+        device.network_type ||
+        "unknown";
+
+      const matchesNetwork =
+        networkFilter === "all" ||
+        network === networkFilter;
+
+      return (
+        matchesSearch &&
+        matchesStatus &&
+        matchesNetwork
+      );
+    });
+  }, [
+    devices,
+    search,
+    statusFilter,
+    networkFilter
+  ]);
+
+  const total = devices.length;
+
+  const online = devices.filter(
+    (device) =>
+      getRealtimeStatus(device) ===
+      "online"
+  ).length;
+
+  const offline = devices.filter(
+    (device) =>
+      getRealtimeStatus(device) ===
+      "offline"
+  ).length;
+
+  const maintenance = devices.filter(
+    (device) =>
+      getRealtimeStatus(device) ===
+      "maintenance"
+  ).length;
+
+  const networkTypes = [
+    ...new Set(
+      devices
+        .map((device) => device.network_type)
+        .filter(Boolean)
+    )
+  ];
+
+  const formatDateTime = (value) => {
+    if (!value) return "—";
+
+    const date = new Date(value);
+
+    if (Number.isNaN(date.getTime())) {
+      return "—";
+    }
+
+    return date.toLocaleString([], {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+  };
+
+  const formatDate = (value) => {
+    if (!value) return "—";
+
+    const date = new Date(value);
+
+    if (Number.isNaN(date.getTime())) {
+      return "—";
+    }
+
+    return date.toLocaleDateString([], {
+      day: "2-digit",
+      month: "short",
+      year: "numeric"
+    });
+  };
+
+  const statusLabel = (status) => {
+    if (status === "online") return "Online";
+    if (status === "offline") return "Offline";
+    if (status === "maintenance")
+      return "Maintenance";
+
+    return "Unknown";
+  };
+
+  const warrantyLabel = (status) => {
+    if (status === "active")
+      return "Active";
+
+    if (status === "expired")
+      return "Expired";
+
+    if (status === "not_started")
+      return "Not Started";
+
+    return "Unknown";
+  };
+
   return (
     <Page
-      title="Devices"
-      sub="IoT device health and connectivity"
+      title="IoT Devices"
+      sub="Live device connectivity, network health and asset lifecycle"
     >
-      <Card className="workspace-card">
-        <PanelHead
-          icon={Cpu}
-          title="IoT Device Network"
-          sub="FlowSense facility connectivity"
-        />
+      <div className="device-workspace">
 
-        <div className="device-status">
-          <span className="device-dot" />
-          <strong>
-            Realtime network available
-          </strong>
-          <small>
-            Devices stream telemetry through
-            the FlowSense WebSocket gateway.
-          </small>
+        <div className="device-hero">
+          <div>
+            <div className="device-hero-eyebrow">
+              <span className="live-pulse" />
+              LIVE DEVICE INVENTORY
+            </div>
+
+            <div className={`device-ws-status device-ws-${deviceWsStatus}`}>
+              <span className="device-ws-dot" />
+              {deviceWsStatus === "live"
+                ? "WebSocket LIVE"
+                : deviceWsStatus === "reconnecting"
+                  ? "WebSocket RECONNECTING"
+                  : deviceWsStatus === "connecting"
+                    ? "WebSocket CONNECTING"
+                    : "REST FALLBACK"}
+            </div>
+
+            <h2>
+              Connected Asset Network
+            </h2>
+
+            <p>
+              Monitor the actual FlowSense IoT
+              devices registered in the backend,
+              their connectivity and lifecycle.
+            </p>
+          </div>
+
+          <button
+            className="device-refresh"
+            onClick={() => loadDevices(true)}
+            disabled={refreshing}
+          >
+            <RefreshCw
+              size={16}
+              className={
+                refreshing
+                  ? "spin"
+                  : ""
+              }
+            />
+            {refreshing
+              ? "Refreshing..."
+              : "Refresh"}
+          </button>
         </div>
-      </Card>
-    </Page>
-  );
-}
 
-function SettingsPage() {
-  return (
-    <Page
-      title="Settings"
-      sub="FlowSense configuration"
-    >
-      <div className="workspace-grid">
-        <Card>
+        <div className="device-kpi-grid">
+
+          <div className="device-stat-card">
+            <div className="device-stat-icon">
+              <Cpu size={20} />
+            </div>
+
+            <div>
+              <span>Total Devices</span>
+              <strong>{total}</strong>
+              <small>
+                Registered assets
+              </small>
+            </div>
+          </div>
+
+          <div className="device-stat-card online">
+            <div className="device-stat-icon">
+              <Activity size={20} />
+            </div>
+
+            <div>
+              <span>Online</span>
+              <strong>{online}</strong>
+              <small>
+                Heartbeat within threshold
+              </small>
+            </div>
+          </div>
+
+          <div className="device-stat-card offline">
+            <div className="device-stat-icon">
+              <ShieldAlert size={20} />
+            </div>
+
+            <div>
+              <span>Offline</span>
+              <strong>{offline}</strong>
+              <small>
+                No recent heartbeat
+              </small>
+            </div>
+          </div>
+
+          <div className="device-stat-card maintenance">
+            <div className="device-stat-icon">
+              <Settings size={20} />
+            </div>
+
+            <div>
+              <span>Maintenance</span>
+              <strong>{maintenance}</strong>
+              <small>
+                Maintenance state
+              </small>
+            </div>
+          </div>
+
+        </div>
+
+        <Card className="device-inventory-card">
+
           <PanelHead
-            icon={Settings}
-            title="Monitoring"
-            sub="Realtime dashboard configuration"
+            icon={Cpu}
+            title="Device Inventory"
+            sub={`${filteredDevices.length} of ${total} devices`}
           />
 
-          <div className="setting-row">
-            <span>Realtime telemetry</span>
-            <b className="green">
-              Enabled
-            </b>
+          <div className="device-toolbar">
+
+            <div className="device-search-box">
+              <Search size={17} />
+
+              <input
+                value={search}
+                onChange={(event) =>
+                  setSearch(
+                    event.target.value
+                  )
+                }
+                placeholder="Search device, model, serial or location..."
+              />
+
+              {search && (
+                <button
+                  onClick={() =>
+                    setSearch("")
+                  }
+                  className="device-search-clear"
+                >
+                  <X size={15} />
+                </button>
+              )}
+            </div>
+
+            <select
+              value={statusFilter}
+              onChange={(event) =>
+                setStatusFilter(
+                  event.target.value
+                )
+              }
+            >
+              <option value="all">
+                All Status
+              </option>
+              <option value="online">
+                Online
+              </option>
+              <option value="offline">
+                Offline
+              </option>
+              <option value="maintenance">
+                Maintenance
+              </option>
+            </select>
+
+            <select
+              value={networkFilter}
+              onChange={(event) =>
+                setNetworkFilter(
+                  event.target.value
+                )
+              }
+            >
+              <option value="all">
+                All Networks
+              </option>
+
+              {networkTypes.map(
+                (network) => (
+                  <option
+                    key={network}
+                    value={network}
+                  >
+                    {network}
+                  </option>
+                )
+              )}
+            </select>
+
           </div>
 
-          <div className="setting-row">
-            <span>WebSocket streaming</span>
-            <b className="green">
-              Enabled
-            </b>
+          {error && (
+            <div className="device-error">
+              <ShieldAlert size={18} />
+
+              <div>
+                <strong>
+                  Backend connection problem
+                </strong>
+
+                <span>
+                  {error}
+                </span>
+              </div>
+
+              <button
+                onClick={() =>
+                  loadDevices()
+                }
+              >
+                Retry
+              </button>
+            </div>
+          )}
+
+          {loading ? (
+            <div className="device-loading">
+              <RefreshCw
+                size={22}
+                className="spin"
+              />
+
+              <span>
+                Loading live device inventory...
+              </span>
+            </div>
+          ) : filteredDevices.length === 0 ? (
+            <div className="device-empty">
+              <Cpu size={34} />
+
+              <strong>
+                No devices found
+              </strong>
+
+              <span>
+                Try changing the search or
+                filter.
+              </span>
+            </div>
+          ) : (
+            <div className="device-table-wrap">
+
+              <table className="device-table">
+
+                <thead>
+                  <tr>
+                    <th>Device</th>
+                    <th>Facility</th>
+                    <th>Network</th>
+                    <th>Status</th>
+                    <th>Last Heartbeat</th>
+                    <th>Warranty</th>
+                    <th />
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {filteredDevices.map(
+                    (device) => {
+                      const status =
+                        getRealtimeStatus(
+                          device
+                        );
+
+                      return (
+                        <tr
+                          key={
+                            device.iot_device_id ||
+                            device.device_code
+                          }
+                        >
+
+                          <td>
+                            <div className="device-primary">
+                              <div className="device-avatar">
+                                <Cpu size={17} />
+                              </div>
+
+                              <div>
+                                <strong>
+                                  {
+                                    device.device_code
+                                  }
+                                </strong>
+
+                                <span>
+                                  {
+                                    device.device_name ||
+                                    device.device_model ||
+                                    "FlowSense IoT Device"
+                                  }
+                                </span>
+                              </div>
+                            </div>
+                          </td>
+
+                          <td>
+                            <div className="device-location">
+                              <strong>
+                                {
+                                  device.facility_code ||
+                                  "—"
+                                }
+                              </strong>
+
+                              <span>
+                                {
+                                  device.installation_location ||
+                                  "Location not configured"
+                                }
+                              </span>
+                            </div>
+                          </td>
+
+                          <td>
+                            <div className="network-cell">
+                              <strong>
+                                {
+                                  device.network_type ||
+                                  "—"
+                                }
+                              </strong>
+
+                              <span>
+                                {
+                                  device.network_identifier ||
+                                  "Identifier unavailable"
+                                }
+                              </span>
+                            </div>
+                          </td>
+
+                          <td>
+                            <span
+                              className={`device-status-badge ${status}`}
+                            >
+                              <span className="status-dot" />
+                              {statusLabel(
+                                status
+                              )}
+                            </span>
+                          </td>
+
+                          <td>
+                            <span className="heartbeat-time">
+                              {formatDateTime(
+                                device.last_seen_at
+                              )}
+                            </span>
+                          </td>
+
+                          <td>
+                            <span
+                              className={`warranty-badge ${device.warranty_status || "unknown"}`}
+                            >
+                              {warrantyLabel(
+                                device.warranty_status
+                              )}
+                            </span>
+                          </td>
+
+                          <td>
+                            <button
+                              className="device-view-button"
+                              onClick={() =>
+                                openDevice(
+                                  device
+                                )
+                              }
+                            >
+                              View
+                              <ChevronDown
+                                size={15}
+                                style={{
+                                  transform:
+                                    "rotate(-90deg)"
+                                }}
+                              />
+                            </button>
+                          </td>
+
+                        </tr>
+                      );
+                    }
+                  )}
+                </tbody>
+
+              </table>
+
+            </div>
+          )}
+
+          <div className="device-footer">
+
+            <span>
+              <span className="live-pulse small" />
+              Live sync every 5 seconds
+            </span>
+
+            <span>
+              Showing{" "}
+              <strong>
+                {filteredDevices.length}
+              </strong>{" "}
+              devices
+            </span>
+
           </div>
+
         </Card>
 
-        <Card>
-          <PanelHead
-            icon={ShieldCheck}
-            title="System"
-            sub="FlowSense platform"
-          />
-
-          <div className="setting-row">
-            <span>Backend</span>
-            <b>FastAPI</b>
-          </div>
-
-          <div className="setting-row">
-            <span>Database</span>
-            <b>PostgreSQL</b>
-          </div>
-        </Card>
       </div>
+
+      {selectedDevice && (
+        <div
+          className="device-modal-overlay"
+          onClick={() =>
+            setSelectedDevice(null)
+          }
+        >
+          <div
+            className="device-modal"
+            onClick={(event) =>
+              event.stopPropagation()
+            }
+          >
+
+            <div className="device-modal-top">
+
+              <div>
+                <div className="device-modal-eyebrow">
+                  DEVICE ASSET
+                </div>
+
+                <h2>
+                  {
+                    selectedDevice.device_code
+                  }
+                </h2>
+
+                <span>
+                  {
+                    selectedDevice.device_model ||
+                    "FlowSense IoT Device"
+                  }
+                </span>
+              </div>
+
+              <button
+                className="device-modal-close"
+                onClick={() =>
+                  setSelectedDevice(null)
+                }
+              >
+                <X size={20} />
+              </button>
+
+            </div>
+
+            <div className="device-modal-status">
+              <span
+                className={`device-status-badge ${
+                  detailHealth?.status ||
+                  getRealtimeStatus(
+                    selectedDevice
+                  )
+                }`}
+              >
+                <span className="status-dot" />
+
+                {statusLabel(
+                  detailHealth?.status ||
+                    getRealtimeStatus(
+                      selectedDevice
+                    )
+                )}
+              </span>
+
+              {detailHealth?.seconds_since_last_seen !=
+                null && (
+                <span>
+                  Last heartbeat{" "}
+                  {
+                    detailHealth.seconds_since_last_seen
+                  }s ago
+                </span>
+              )}
+            </div>
+
+            {detailLoading ? (
+              <div className="device-detail-loading">
+                <RefreshCw
+                  size={20}
+                  className="spin"
+                />
+                Loading live device details...
+              </div>
+            ) : (
+              <div className="device-detail-grid">
+
+                <section className="device-detail-section">
+
+                  <h3>
+                    Device Information
+                  </h3>
+
+                  <div className="device-detail-row">
+                    <span>Device Code</span>
+                    <strong>
+                      {
+                        selectedDevice.device_code
+                      }
+                    </strong>
+                  </div>
+
+                  <div className="device-detail-row">
+                    <span>Model</span>
+                    <strong>
+                      {
+                        selectedDevice.device_model ||
+                        "—"
+                      }
+                    </strong>
+                  </div>
+
+                  <div className="device-detail-row">
+                    <span>Firmware</span>
+                    <strong>
+                      {
+                        selectedDevice.firmware_version ||
+                        "—"
+                      }
+                    </strong>
+                  </div>
+
+                  <div className="device-detail-row">
+                    <span>Protocol</span>
+                    <strong>
+                      {
+                        selectedDevice.communication_protocol ||
+                        "—"
+                      }
+                    </strong>
+                  </div>
+
+                  <div className="device-detail-row">
+                    <span>Serial Number</span>
+                    <strong>
+                      {
+                        selectedDevice.serial_number ||
+                        "—"
+                      }
+                    </strong>
+                  </div>
+
+                </section>
+
+                <section className="device-detail-section">
+
+                  <h3>
+                    Live Network Health
+                  </h3>
+
+                  <div className="device-detail-row">
+                    <span>Technology</span>
+                    <strong>
+                      {
+                        detailHealth?.network_type ||
+                        selectedDevice.network_type ||
+                        "—"
+                      }
+                    </strong>
+                  </div>
+
+                  <div className="device-detail-row">
+                    <span>Network ID</span>
+                    <strong>
+                      {
+                        detailHealth?.network_identifier ||
+                        selectedDevice.network_identifier ||
+                        "—"
+                      }
+                    </strong>
+                  </div>
+
+                  <div className="device-detail-row">
+                    <span>Database Status</span>
+                    <strong>
+                      {
+                        detailHealth?.database_status ||
+                        selectedDevice.status ||
+                        "—"
+                      }
+                    </strong>
+                  </div>
+
+                  <div className="device-detail-row">
+                    <span>Realtime Status</span>
+                    <strong>
+                      {
+                        detailHealth?.status ||
+                        "—"
+                      }
+                    </strong>
+                  </div>
+
+                  <div className="device-detail-row">
+                    <span>Offline Reason</span>
+                    <strong>
+                      {
+                        detailHealth?.offline_reason ||
+                        "None"
+                      }
+                    </strong>
+                  </div>
+
+                </section>
+
+                <section className="device-detail-section">
+
+                  <h3>
+                    Installation & Lifecycle
+                  </h3>
+
+                  <div className="device-detail-row">
+                    <span>Installation</span>
+                    <strong>
+                      {formatDate(
+                        selectedDevice.installation_date
+                      )}
+                    </strong>
+                  </div>
+
+                  <div className="device-detail-row">
+                    <span>Commissioned</span>
+                    <strong>
+                      {formatDate(
+                        selectedDevice.commissioned_at
+                      )}
+                    </strong>
+                  </div>
+
+                  <div className="device-detail-row">
+                    <span>Decommissioned</span>
+                    <strong>
+                      {formatDate(
+                        selectedDevice.decommissioned_at
+                      )}
+                    </strong>
+                  </div>
+
+                  <div className="device-detail-row">
+                    <span>Reason</span>
+                    <strong>
+                      {
+                        selectedDevice.decommission_reason ||
+                        "—"
+                      }
+                    </strong>
+                  </div>
+
+                </section>
+
+                <section className="device-detail-section">
+
+                  <h3>
+                    Warranty & Uptime
+                  </h3>
+
+                  <div className="device-detail-row">
+                    <span>Warranty</span>
+                    <strong>
+                      {warrantyLabel(
+                        selectedDevice.warranty_status
+                      )}
+                    </strong>
+                  </div>
+
+                  <div className="device-detail-row">
+                    <span>Warranty Start</span>
+                    <strong>
+                      {formatDate(
+                        selectedDevice.warranty_start_date
+                      )}
+                    </strong>
+                  </div>
+
+                  <div className="device-detail-row">
+                    <span>Warranty End</span>
+                    <strong>
+                      {formatDate(
+                        selectedDevice.warranty_end_date
+                      )}
+                    </strong>
+                  </div>
+
+                  <div className="device-detail-row">
+                    <span>24h Uptime</span>
+                    <strong>
+                      {detailUptime?.uptime_percent !=
+                      null
+                        ? `${Number(
+                            detailUptime.uptime_percent
+                          ).toFixed(1)}%`
+                        : "—"}
+                    </strong>
+                  </div>
+
+                </section>
+
+              </div>
+            )}
+
+          </div>
+        </div>
+      )}
     </Page>
   );
 }
@@ -4316,17 +5300,28 @@ function App() {
 
           <Route
             path="/settings"
-            element={<SettingsPage />}
+            element={
+              <Page
+                title="Settings"
+                sub="FlowSense platform configuration and preferences"
+              >
+                <Card className="workspace-card">
+                  <PanelHead
+                    icon={Settings}
+                    title="Settings"
+                    sub="FlowSense platform configuration and preferences"
+                  />
+
+                  <p className="workspace-copy">
+                    FlowSense settings and platform preferences.
+                  </p>
+                </Card>
+              </Page>
+            }
           />
         </Route>
       </Route>
 
-      <Route
-        path="*"
-        element={
-          <Navigate to="/login" replace />
-        }
-      />
     </Routes>
   );
 }

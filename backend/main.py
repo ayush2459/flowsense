@@ -19,6 +19,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, Optional
 from device_routes import router as device_router
+from device_realtime import manager as device_ws_manager
 
 from fastapi import (
     FastAPI,
@@ -482,6 +483,29 @@ manager = ConnectionManager()
 # ============================================================
 # REALTIME WEBSOCKET ROUTES
 # ============================================================
+
+# ============================================================
+# DEVICE ASSET REALTIME WEBSOCKET
+# ============================================================
+
+@app.websocket("/ws/devices")
+async def device_realtime_websocket(websocket: WebSocket):
+    """Push real device heartbeat events to the Devices UI."""
+    await device_ws_manager.connect(websocket)
+    try:
+        while True:
+            try:
+                message = await asyncio.wait_for(websocket.receive_text(), timeout=25.0)
+                if message.lower() == "ping":
+                    await websocket.send_json({"type": "pong"})
+            except asyncio.TimeoutError:
+                await websocket.send_json({"type": "heartbeat"})
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:
+        print(f"[DeviceWS] Error -> {exc}")
+    finally:
+        await device_ws_manager.disconnect(websocket)
 
 @app.websocket("/ws/live/all")
 async def live_all_websocket(
