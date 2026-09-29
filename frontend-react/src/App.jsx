@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Routes,
   Route,
@@ -4102,6 +4102,11 @@ function Devices() {
   const [detailNetwork, setDetailNetwork] = useState(null);
   const [detailUptime, setDetailUptime] = useState(null);
   const [deviceWsStatus, setDeviceWsStatus] = useState("connecting");
+  const selectedDeviceRef = useRef(null);
+
+  useEffect(() => {
+    selectedDeviceRef.current = selectedDevice;
+  }, [selectedDevice]);
 
   const loadDevices = async (silent = false) => {
     try {
@@ -4133,102 +4138,276 @@ function Devices() {
   };
 
   useEffect(() => {
-    loadDevices();
+  let socket = null;
+  let reconnectTimer = null;
+  let stopped = false;
+  let reconnectAttempt = 0;
 
-    const interval = setInterval(() => {
-      loadDevices(true);
-    }, 5000);
+  const getWebSocketUrl = () => {
+    const base = String(API_BASE_URL || "http://localhost:8000");
+    const parsed = new URL(base);
 
-    return () => clearInterval(interval);
-  }, []);
+    parsed.protocol = parsed.protocol === "https:" ? "wss:" : "ws:";
+    parsed.pathname = `${parsed.pathname.replace(/\/$/, "")}/ws/devices`;
+    parsed.search = "";
+    parsed.hash = "";
 
-  useEffect(() => {
-    let socket = null;
-    let reconnectTimer = null;
-    let stopped = false;
+    return parsed.toString();
+  };
 
-    const websocketUrl = () => {
-      const base = String(API_BASE_URL || "http://localhost:8000");
-      const parsed = new URL(base);
-      parsed.protocol = parsed.protocol === "https:" ? "wss:" : "ws:";
-      parsed.pathname = `${parsed.pathname.replace(/\/$/, "")}/ws/devices`;
-      parsed.search = "";
-      parsed.hash = "";
-      return parsed.toString();
+  const clearReconnectTimer = () => {
+    if (reconnectTimer) {
+      window.clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+  };
+
+  const scheduleReconnect = () => {
+    if (stopped || reconnectTimer) return;
+
+    reconnectAttempt += 1;
+
+    const delay = Math.min(
+      1000 * Math.pow(1.5, reconnectAttempt - 1),
+      10000
+    );
+
+    setDeviceWsStatus("reconnecting");
+
+    reconnectTimer = window.setTimeout(() => {
+      reconnectTimer = null;
+      connect();
+    }, delay);
+  };
+
+  const connect = () => {
+    if (stopped) return;
+
+    clearReconnectTimer();
+
+    // Never create a second active socket.
+    if (
+      socket &&
+      (
+        socket.readyState === WebSocket.OPEN ||
+        socket.readyState === WebSocket.CONNECTING
+      )
+    ) {
+      return;
+    }
+
+    setDeviceWsStatus("connecting");
+
+    let currentSocket;
+
+    try {
+      currentSocket = new WebSocket(getWebSocketUrl());
+      socket = currentSocket;
+    } catch (error) {
+      console.error("[DeviceWS] Connection creation failed:", error);
+      socket = null;
+      setDeviceWsStatus("disconnected");
+      scheduleReconnect();
+      return;
+    }
+
+    currentSocket.onopen = () => {
+      if (stopped || socket !== currentSocket) return;
+
+      reconnectAttempt = 0;
+      setDeviceWsStatus("live");
+
+      console.log("[DeviceWS] Connected");
     };
 
-    const connect = () => {
-      if (stopped) return;
-      setDeviceWsStatus("connecting");
+    currentSocket.onmessage = (event) => {
+      if (stopped || socket !== currentSocket) return;
 
       try {
-        socket = new WebSocket(websocketUrl());
-      } catch (err) {
-        console.error("Device WebSocket creation error:", err);
-        setDeviceWsStatus("disconnected");
-        reconnectTimer = window.setTimeout(connect, 3000);
+        const message = JSON.parse(event.data || "{}");
+
+        // Backend keepalive messages.
+        if (
+          message.type === "heartbeat" ||
+          message.type === "pong"
+        ) {
+          return;
+        }
+
+        if (message.type !== "device_heartbeat") {
+          return;
+        }
+
+        const deviceCode = message.device_code;
+
+        if (!deviceCode) return;
+
+        console.log(
+          "[DeviceWS] Heartbeat:",
+          deviceCode
+        );
+
+        setDevices((currentDevices) =>
+          currentDevices.map((device) => {
+            if (device.device_code !== deviceCode) {
+              return device;
+            }
+
+            return {
+              ...device,
+              status:
+                message.database_status ||
+                message.device_status ||
+                "online",
+              realtime_status:
+                message.status ||
+                "online",
+              last_seen_at:
+                message.last_seen_at ||
+                message.heartbeat_at ||
+                device.last_seen_at,
+              network_type:
+                message.network_type ||
+                device.network_type,
+              network_identifier:
+                message.network_identifier ||
+                device.network_identifier,
+              firmware_version:
+                message.firmware_version ||
+                device.firmware_version,
+            };
+          })
+        );
+
+        const currentSelectedDevice =
+          selectedDeviceRef.current;
+
+        if (
+          currentSelectedDevice &&
+          currentSelectedDevice.device_code === deviceCode
+        ) {
+          setSelectedDevice((currentSelected) => {
+            if (
+              !currentSelected ||
+              currentSelected.device_code !== deviceCode
+            ) {
+              return currentSelected;
+            }
+
+            return {
+              ...currentSelected,
+              status:
+                message.database_status ||
+                message.device_status ||
+                "online",
+              realtime_status:
+                message.status ||
+                "online",
+              last_seen_at:
+                message.last_seen_at ||
+                message.heartbeat_at ||
+                currentSelected.last_seen_at,
+              network_type:
+                message.network_type ||
+                currentSelected.network_type,
+              network_identifier:
+                message.network_identifier ||
+                currentSelected.network_identifier,
+              firmware_version:
+                message.firmware_version ||
+                currentSelected.firmware_version,
+            };
+          });
+
+          setDetailHealth((currentHealth) => ({
+            ...(currentHealth || {}),
+            device_code: deviceCode,
+            status: message.status || "online",
+            database_status:
+              message.database_status ||
+              currentHealth?.database_status ||
+              "online",
+            last_seen_at:
+              message.last_seen_at ||
+              message.heartbeat_at ||
+              currentHealth?.last_seen_at,
+            checked_at: new Date().toISOString(),
+            seconds_since_last_seen: 0,
+            heartbeat_timeout_seconds:
+              currentHealth?.heartbeat_timeout_seconds || 120,
+            offline_reason: null,
+            evidence: null,
+            network_type:
+              message.network_type ||
+              currentHealth?.network_type,
+            network_identifier:
+              message.network_identifier ||
+              currentHealth?.network_identifier,
+            firmware_version:
+              message.firmware_version ||
+              currentHealth?.firmware_version,
+            signal_strength:
+              message.signal_strength ??
+              currentHealth?.signal_strength,
+          }));
+        }
+      } catch (error) {
+        console.error(
+          "[DeviceWS] Message parsing error:",
+          error
+        );
+      }
+    };
+
+    currentSocket.onerror = (event) => {
+      if (stopped || socket !== currentSocket) return;
+
+      console.warn("[DeviceWS] Socket error", event);
+      setDeviceWsStatus("disconnected");
+    };
+
+    currentSocket.onclose = (event) => {
+      if (socket === currentSocket) {
+        socket = null;
+      }
+
+      if (stopped) {
         return;
       }
 
-      socket.onopen = () => setDeviceWsStatus("live");
+      console.warn(
+        `[DeviceWS] Closed: code=${event.code}, reason=${event.reason || "none"}`
+      );
 
-      socket.onmessage = (event) => {
-        try {
-          const message = JSON.parse(event.data || "{}");
-          if (message.type === "heartbeat" || message.type === "pong") return;
-          if (message.type !== "device_heartbeat") return;
-
-          setDevices((current) => current.map((device) => {
-            if (device.device_code !== message.device_code) return device;
-            return {
-              ...device,
-              status: message.database_status || "online",
-              realtime_status: message.status || "online",
-              last_seen_at: message.last_seen_at || message.heartbeat_at || device.last_seen_at,
-              network_type: message.network_type || device.network_type,
-              network_identifier: message.network_identifier || device.network_identifier,
-              firmware_version: message.firmware_version || device.firmware_version,
-            };
-          }));
-
-          if (selectedDevice?.device_code === message.device_code) {
-            setDetailHealth((current) => ({
-              ...(current || {}),
-              device_code: message.device_code,
-              status: message.status || "online",
-              database_status: message.database_status || "online",
-              last_seen_at: message.last_seen_at || message.heartbeat_at,
-              checked_at: new Date().toISOString(),
-              seconds_since_last_seen: 0,
-              heartbeat_timeout_seconds: current?.heartbeat_timeout_seconds || 120,
-              offline_reason: null,
-              evidence: null,
-              network_type: message.network_type || current?.network_type,
-              network_identifier: message.network_identifier || current?.network_identifier,
-            }));
-          }
-        } catch (err) {
-          console.error("Device WebSocket message error:", err);
-        }
-      };
-
-      socket.onerror = () => setDeviceWsStatus("disconnected");
-
-      socket.onclose = () => {
-        if (stopped) return;
-        setDeviceWsStatus("reconnecting");
-        reconnectTimer = window.setTimeout(connect, 3000);
-      };
+      setDeviceWsStatus("reconnecting");
+      scheduleReconnect();
     };
+  };
 
-    connect();
+  connect();
 
-    return () => {
-      stopped = true;
-      if (reconnectTimer) window.clearTimeout(reconnectTimer);
-      if (socket) socket.close();
-    };
-  }, []);
+  return () => {
+    stopped = true;
+    clearReconnectTimer();
+
+    const currentSocket = socket;
+    socket = null;
+
+    if (currentSocket) {
+      currentSocket.onopen = null;
+      currentSocket.onmessage = null;
+      currentSocket.onerror = null;
+      currentSocket.onclose = null;
+
+      if (
+        currentSocket.readyState === WebSocket.OPEN ||
+        currentSocket.readyState === WebSocket.CONNECTING
+      ) {
+        currentSocket.close(1000, "Devices page cleanup");
+      }
+    }
+  };
+}, []);
 
   const openDevice = async (device) => {
     setSelectedDevice(device);
@@ -4245,7 +4424,18 @@ function Devices() {
           )
         ]);
 
-      setDetailHealth(health);
+      setDetailHealth((currentHealth) => {
+        const currentSeen = currentHealth?.last_seen_at
+          ? new Date(currentHealth.last_seen_at).getTime()
+          : 0;
+        const incomingSeen = health?.last_seen_at
+          ? new Date(health.last_seen_at).getTime()
+          : 0;
+
+        return incomingSeen >= currentSeen
+          ? health
+          : currentHealth;
+      });
       setDetailNetwork(network);
       setDetailUptime(uptime);
     } catch (err) {
@@ -4259,26 +4449,47 @@ function Devices() {
   };
 
   useEffect(() => {
-    if (!selectedDevice) return;
+  if (!selectedDevice) return;
 
-    const interval = setInterval(async () => {
-      try {
-        const health =
-          await api.deviceRealtimeHealth(
-            selectedDevice.device_code
-          );
+  let stopped = false;
 
-        setDetailHealth(health);
-      } catch (err) {
-        console.error(
-          "Realtime device health error:",
-          err
-        );
+  const refreshHealth = async () => {
+    try {
+      const health = await api.deviceRealtimeHealth(
+        selectedDevice.device_code
+      );
+
+      if (!stopped) {
+        setDetailHealth((currentHealth) => {
+          const currentSeen = currentHealth?.last_seen_at
+            ? new Date(currentHealth.last_seen_at).getTime()
+            : 0;
+          const incomingSeen = health?.last_seen_at
+            ? new Date(health.last_seen_at).getTime()
+            : 0;
+
+          return incomingSeen >= currentSeen
+            ? health
+            : currentHealth;
+        });
       }
-    }, 5000);
+    } catch (err) {
+      console.error("Realtime device health error:", err);
+    }
+  };
 
-    return () => clearInterval(interval);
-  }, [selectedDevice]);
+  refreshHealth();
+
+  const interval = window.setInterval(
+    refreshHealth,
+    5000
+  );
+
+  return () => {
+    stopped = true;
+    window.clearInterval(interval);
+  };
+}, [selectedDevice]);
 
   const getRealtimeStatus = (device) => {
     const status =
@@ -5130,14 +5341,42 @@ function Devices() {
                   <div className="device-detail-row">
                     <span>24h Uptime</span>
                     <strong>
-                      {detailUptime?.uptime_percent !=
-                      null
+                      {detailUptime?.data_complete &&
+                      detailUptime.uptime_percent != null
                         ? `${Number(
                             detailUptime.uptime_percent
                           ).toFixed(1)}%`
                         : "—"}
                     </strong>
                   </div>
+
+                  {detailUptime && (
+                    <div className="device-uptime-meta">
+                      <div>
+                        Observed uptime: {" "}
+                        {detailUptime.observed_uptime_percent != null
+                          ? `${Number(
+                              detailUptime.observed_uptime_percent
+                            ).toFixed(1)}%`
+                          : "—"}
+                      </div>
+
+                      <div>
+                        Data coverage: {" "}
+                        {detailUptime.coverage_percent != null
+                          ? `${Number(
+                              detailUptime.coverage_percent
+                            ).toFixed(1)}%`
+                          : "0.0%"}
+                      </div>
+
+                      {!detailUptime.data_complete && (
+                        <div>
+                          Complete 24h uptime will be available after enough real heartbeat history is collected.
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                 </section>
 

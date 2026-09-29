@@ -1,6 +1,5 @@
 from device_realtime import broadcast_device_heartbeat
-from datetime import datetime, timezone
-
+from datetime import datetime, timedelta, timezone
 from fastapi import (
     BackgroundTasks,
     Depends,
@@ -756,14 +755,18 @@ def get_device_uptime(
     db: Session = Depends(get_db),
 ):
     """
-    Calculate device uptime from real heartbeat evidence.
+    Calculate uptime using only real device heartbeat evidence.
 
-    A heartbeat proves the device was reachable at the
-    heartbeat timestamp. The device remains considered
-    online for the heartbeat timeout window unless another
-    heartbeat arrives earlier.
-
-    No synthetic uptime data is generated.
+    Important:
+    - No synthetic uptime is generated.
+    - A heartbeat proves the device was online at that point.
+    - The device remains online for HEARTBEAT_TIMEOUT_SECONDS
+      after the heartbeat.
+    - If another heartbeat arrives before the timeout, the
+      interval remains online.
+    - If the gap exceeds the timeout, the remaining gap is
+      classified as offline.
+    - Time before the first available heartbeat is UNKNOWN.
     """
 
     device = (
@@ -780,132 +783,318 @@ def get_device_uptime(
 
     hours = max(1, min(hours, 8760))
 
-    heartbeat_timeout_seconds = 120
+    heartbeat_timeout_seconds = HEARTBEAT_TIMEOUT_SECONDS
 
-    row = db.execute(
-        text(
-            """
-            WITH boundaries AS (
-                SELECT
-                    NOW() - (:hours || ' hours')::interval
-                        AS start_time,
-                    NOW() AS end_time
+    now = utc_now()
+
+    period_start = now - timedelta(hours=hours)
+
+    period_end = now
+
+    # ---------------------------------------------------------
+    # Get REAL heartbeat events from PostgreSQL
+    # ---------------------------------------------------------
+
+    events = (
+        db.query(DeviceNetworkEvent)
+        .filter(
+            DeviceNetworkEvent.iot_device_id == device.iot_device_id,
+            DeviceNetworkEvent.event_type == "online",
+            DeviceNetworkEvent.source == "device_heartbeat",
+            DeviceNetworkEvent.event_time <= period_end,
+            DeviceNetworkEvent.event_time >= (
+                period_start
+                - timedelta(seconds=heartbeat_timeout_seconds)
             ),
+        )
+        .order_by(
+            DeviceNetworkEvent.event_time.asc()
+        )
+        .all()
+    )
 
-            heartbeat_events AS (
-                SELECT
-                    event_time
-                FROM device_network_events
-                WHERE iot_device_id = :device_id
-                  AND event_type = 'online'
-                  AND source = 'device_heartbeat'
-                  AND event_time <= NOW()
-                  AND event_time >=
-                      NOW()
-                      - (:hours || ' hours')::interval
-                      - (:heartbeat_timeout || ' seconds')::interval
-                ORDER BY event_time
-            ),
+    heartbeat_times = []
 
-            heartbeat_intervals AS (
-                SELECT
-                    event_time,
-                    LEAD(event_time) OVER (
-                        ORDER BY event_time
-                    ) AS next_heartbeat
-                FROM heartbeat_events
-            ),
+    for event in events:
 
-            uptime_intervals AS (
-                SELECT
-                    GREATEST(
-                        event_time,
-                        NOW()
-                        - (:hours || ' hours')::interval
-                    ) AS interval_start,
+        event_time = event.event_time
 
-                    LEAST(
-                        COALESCE(
-                            next_heartbeat,
-                            NOW()
-                        ),
-                        event_time
-                        + (:heartbeat_timeout || ' seconds')::interval,
-                        NOW()
-                    ) AS interval_end
+        if event_time is None:
+            continue
 
-                FROM heartbeat_intervals
+        if event_time.tzinfo is None:
+            event_time = event_time.replace(
+                tzinfo=timezone.utc
             )
 
-            SELECT
-                COALESCE(
-                    SUM(
-                        GREATEST(
-                            0,
-                            EXTRACT(
-                                EPOCH FROM (
-                                    interval_end
-                                    - interval_start
-                                )
-                            )
-                        )
-                    ),
-                    0
-                ) AS online_seconds,
+        heartbeat_times.append(event_time)
 
-                EXTRACT(
-                    EPOCH FROM (
-                        NOW()
-                        -
-                        (
-                            NOW()
-                            - (:hours || ' hours')::interval
-                        )
-                    )
-                ) AS total_seconds
+    # last_seen_at is also real heartbeat evidence.
+    if device.last_seen_at:
 
-            FROM uptime_intervals
-            """
-        ),
-        {
-            "device_id": device.iot_device_id,
-            "hours": hours,
-            "heartbeat_timeout": heartbeat_timeout_seconds,
-        },
-    ).mappings().first()
+        last_seen = device.last_seen_at
 
-    online_seconds = float(
-        row["online_seconds"] or 0
+        if last_seen.tzinfo is None:
+            last_seen = last_seen.replace(
+                tzinfo=timezone.utc
+            )
+
+        if (
+            period_start
+            - timedelta(seconds=heartbeat_timeout_seconds)
+            <= last_seen
+            <= period_end
+        ):
+            heartbeat_times.append(last_seen)
+
+    # Remove duplicates and sort.
+    heartbeat_times = sorted(
+        set(heartbeat_times)
     )
 
     total_seconds = float(
-        row["total_seconds"] or 0
+        (
+            period_end
+            - period_start
+        ).total_seconds()
     )
 
-    uptime_percent = (
-        (online_seconds / total_seconds) * 100
+    online_seconds = 0.0
+    offline_seconds = 0.0
+
+    # ---------------------------------------------------------
+    # Calculate REAL observed uptime
+    # ---------------------------------------------------------
+
+    if heartbeat_times:
+
+        for index, heartbeat_time in enumerate(
+            heartbeat_times
+        ):
+
+            if heartbeat_time > period_end:
+                continue
+
+            # The interval ends at:
+            # - next heartbeat
+            # - current time
+            # whichever comes first.
+            if index + 1 < len(heartbeat_times):
+
+                next_heartbeat = heartbeat_times[
+                    index + 1
+                ]
+
+                interval_end = min(
+                    next_heartbeat,
+                    period_end,
+                )
+
+            else:
+
+                interval_end = period_end
+
+            # Ignore intervals completely before the
+            # requested reporting period.
+            if interval_end <= period_start:
+                continue
+
+            # -------------------------------------------------
+            # ONLINE portion
+            # -------------------------------------------------
+
+            online_start = max(
+                heartbeat_time,
+                period_start,
+            )
+
+            online_end = min(
+                heartbeat_time
+                + timedelta(
+                    seconds=heartbeat_timeout_seconds
+                ),
+                interval_end,
+                period_end,
+            )
+
+            if online_end > online_start:
+
+                online_seconds += (
+                    online_end
+                    - online_start
+                ).total_seconds()
+
+            # -------------------------------------------------
+            # OFFLINE portion
+            #
+            # Once the heartbeat timeout has passed,
+            # the device is considered offline until the
+            # next real heartbeat.
+            # -------------------------------------------------
+
+            offline_start = max(
+                heartbeat_time
+                + timedelta(
+                    seconds=heartbeat_timeout_seconds
+                ),
+                period_start,
+            )
+
+            offline_end = min(
+                interval_end,
+                period_end,
+            )
+
+            if offline_end > offline_start:
+
+                offline_seconds += (
+                    offline_end
+                    - offline_start
+                ).total_seconds()
+
+    # ---------------------------------------------------------
+    # Observed evidence
+    # ---------------------------------------------------------
+
+    observed_seconds = (
+        online_seconds
+        + offline_seconds
+    )
+
+    observed_seconds = min(
+        max(observed_seconds, 0.0),
+        total_seconds,
+    )
+
+    unknown_seconds = max(
+        total_seconds
+        - observed_seconds,
+        0.0,
+    )
+
+    # ---------------------------------------------------------
+    # Percentages
+    # ---------------------------------------------------------
+
+    coverage_percent = (
+        (
+            observed_seconds
+            / total_seconds
+        )
+        * 100
         if total_seconds > 0
-        else 0
+        else 0.0
+    )
+
+    observed_uptime_percent = (
+        (
+            online_seconds
+            / observed_seconds
+        )
+        * 100
+        if observed_seconds > 0
+        else None
+    )
+
+    # A true 24h uptime value is only available when the
+    # complete requested period has real evidence.
+    data_complete = (
+        coverage_percent >= 99.999
+    )
+
+    # Only expose uptime_percent as a valid "requested
+    # period uptime" when the requested period is completely
+    # covered by real evidence.
+    #
+    # Otherwise the frontend should display "--" and show
+    # observed uptime + coverage separately.
+    uptime_percent = (
+        round(
+            observed_uptime_percent,
+            2,
+        )
+        if (
+            data_complete
+            and observed_uptime_percent is not None
+        )
+        else None
     )
 
     return {
-        "device_id": str(device.iot_device_id),
+        "device_id": str(
+            device.iot_device_id
+        ),
+
         "device_code": device.device_code,
+
         "period_hours": hours,
+
+        # Real online time supported by heartbeat evidence.
         "online_seconds": round(
             online_seconds,
             2,
         ),
+
+        # Real offline time after heartbeat timeout.
+        "offline_seconds": round(
+            offline_seconds,
+            2,
+        ),
+
+        # Time for which we have actual heartbeat evidence.
+        "observed_seconds": round(
+            observed_seconds,
+            2,
+        ),
+
+        # Time for which there is no heartbeat evidence.
+        "unknown_seconds": round(
+            unknown_seconds,
+            2,
+        ),
+
         "total_seconds": round(
             total_seconds,
             2,
         ),
-        "uptime_percent": round(
-            uptime_percent,
+
+        # Only populated when the complete requested period
+        # has real evidence.
+        "uptime_percent": uptime_percent,
+
+        # Uptime calculated only over the period for which
+        # real evidence exists.
+        "observed_uptime_percent": (
+            round(
+                observed_uptime_percent,
+                2,
+            )
+            if observed_uptime_percent is not None
+            else None
+        ),
+
+        # How much of the requested period has actual
+        # heartbeat evidence.
+        "coverage_percent": round(
+            coverage_percent,
             2,
         ),
+
+        "data_complete": data_complete,
+
         "heartbeat_timeout_seconds":
             heartbeat_timeout_seconds,
+
+        "heartbeat_count":
+            len(heartbeat_times),
+
         "calculation":
-            "Based on real device heartbeat evidence",
+            "Uptime is calculated only from real device "
+            "heartbeat evidence. A heartbeat keeps the "
+            "device online for the configured heartbeat "
+            "timeout. Gaps beyond the timeout are counted "
+            "as offline. Time before the first available "
+            "heartbeat is unknown and is not treated as "
+            "online or offline. No synthetic uptime data "
+            "is generated.",
     }

@@ -4997,3 +4997,389 @@ td:first-child small {
 .device-ws-connecting,
 .device-ws-reconnecting { color: #d97706; }
 .device-ws-disconnected { color: #dc2626; }
+.device-uptime-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  margin-top: 10px;
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+.device-uptime-meta > div {
+  width: 100%;
+}
+
+.device-uptime-meta > div {
+  color: #64748b;
+  opacity: 1;
+}
+
+.device-uptime-meta strong {
+  font-weight: 600;
+  color: #334155;
+}
+
+.device-uptime-status {
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #64748b;
+  opacity: 1;
+}
+/* =========================================================
+   DEVICE INVENTORY — COMPACT ROW FIX
+   ========================================================= */
+
+.device-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.device-table {
+  width: 100%;
+  min-width: 980px;
+  border-collapse: collapse;
+  border-spacing: 0;
+  table-layout: fixed;
+}
+
+.device-table thead tr {
+  height: 42px;
+}
+
+.device-table th {
+  padding: 10px 14px;
+  height: 42px;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.device-table td {
+  height: 58px;
+  padding: 8px 14px;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.device-table tbody tr {
+  height: 58px;
+}
+
+.device-table tbody tr:hover {
+  background: #121f35;
+}
+
+/* Column sizing */
+
+.device-table th:nth-child(1),
+.device-table td:nth-child(1) {
+  width: 22%;
+}
+
+.device-table th:nth-child(2),
+.device-table td:nth-child(2) {
+  width: 17%;
+}
+
+.device-table th:nth-child(3),
+.device-table td:nth-child(3) {
+  width: 18%;
+}
+
+.device-table th:nth-child(4),
+.device-table td:nth-child(4) {
+  width: 11%;
+}
+
+.device-table th:nth-child(5),
+.device-table td:nth-child(5) {
+  width: 14%;
+}
+
+.device-table th:nth-child(6),
+.device-table td:nth-child(6) {
+  width: 10%;
+}
+
+.device-table th:nth-child(7),
+.device-table td:nth-child(7) {
+  width: 8%;
+}
+
+/* Device */
+
+.device-primary,
+.device-location,
+.network-cell {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.device-primary > div:last-child,
+.device-location,
+.network-cell {
+  min-width: 0;
+}
+
+.device-primary strong,
+.device-primary span,
+.device-location strong,
+.device-location span,
+.network-cell strong,
+.network-cell span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.device-primary strong,
+.device-location strong,
+.network-cell strong {
+  color: var(--text-primary);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.device-primary span,
+.device-location span,
+.network-cell span {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 8px;
+  line-height: 1.25;
+}
+
+/* Device icon */
+
+.device-avatar {
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+
+  display: grid;
+  place-items: center;
+
+  border-radius: 8px;
+
+  color: #60a5fa;
+  background: rgba(59, 130, 246, 0.11);
+}
+
+.device-avatar svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* Network */
+
+.network-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+}
+
+/* Location */
+
+.device-location {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+}
+
+/* Status */
+
+.device-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+
+  min-height: 24px;
+  padding: 4px 8px;
+
+  border-radius: 6px;
+
+  white-space: nowrap;
+
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.device-status-badge.online {
+  color: var(--green);
+  background: rgba(34, 197, 94, 0.10);
+}
+
+.device-status-badge.offline {
+  color: var(--red);
+  background: rgba(239, 68, 68, 0.10);
+}
+
+.device-status-badge.maintenance {
+  color: var(--yellow);
+  background: rgba(245, 158, 11, 0.10);
+}
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  min-width: 6px;
+
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* Heartbeat */
+
+.heartbeat-time {
+  display: block;
+
+  color: var(--text-secondary);
+
+  font-size: 8px;
+  line-height: 1.3;
+
+  white-space: nowrap;
+}
+
+/* Warranty */
+
+.warranty-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  min-height: 23px;
+  padding: 4px 7px;
+
+  border-radius: 5px;
+
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 1;
+
+  white-space: nowrap;
+}
+
+.warranty-badge.active {
+  color: var(--green);
+  background: rgba(34, 197, 94, 0.10);
+}
+
+.warranty-badge.expired {
+  color: var(--red);
+  background: rgba(239, 68, 68, 0.10);
+}
+
+.warranty-badge.unknown {
+  color: var(--text-muted);
+  background: rgba(92, 107, 136, 0.10);
+}
+
+/* View button */
+
+.device-view-button {
+  height: 30px;
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  gap: 5px;
+
+  padding: 0 9px;
+
+  border: 1px solid var(--border);
+  border-radius: 7px;
+
+  color: #60a5fa;
+  background: transparent;
+
+  font-size: 8px;
+  font-weight: 700;
+
+  white-space: nowrap;
+
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.device-view-button:hover {
+  background: rgba(59, 130, 246, 0.10);
+  border-color: rgba(59, 130, 246, 0.35);
+}
+
+.device-view-button svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* Footer */
+
+.device-footer {
+  min-height: 42px;
+
+  padding: 10px 16px;
+
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  gap: 15px;
+
+  border-top: 1px solid var(--border);
+
+  color: var(--text-muted);
+
+  font-size: 8px;
+}
+
+.device-footer > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.device-footer strong {
+  color: var(--text-secondary);
+}
+
+/* Remove accidental vertical expansion */
+
+.device-table td > div,
+.device-table td > span,
+.device-table td > button {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.device-table td p {
+  margin: 0;
+}
+
+/* Mobile */
+
+@media (max-width: 900px) {
+  .device-table {
+    min-width: 900px;
+  }
+
+  .device-table td {
+    height: 54px;
+    padding: 7px 11px;
+  }
+
+  .device-table tbody tr {
+    height: 54px;
+  }
+}
