@@ -173,8 +173,14 @@ export const api = {
         period
       )}`,
       {
-        timeout: 90000
+        timeout: 180000
       }
+    ),
+
+  aiPortfolioAnalysis: (period = "24h") =>
+    post(
+      `/api/reports/portfolio/ai-analysis?period=${encode(period)}`,
+      { timeout: 180000 }
     ),
 
   reportPdfUrl: (

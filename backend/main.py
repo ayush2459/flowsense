@@ -14,7 +14,7 @@ Stage 3:
 """
 
 import asyncio
-from ollama_service import generate_report_analysis
+from ollama_service import generate_report_analysis, generate_portfolio_report_analysis
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -30,6 +30,7 @@ from fastapi import (
 )
 from auth_routes import router as auth_router
 from settings_routes import router as settings_router
+from maintenance_routes import router as maintenance_router
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
@@ -337,6 +338,7 @@ app = FastAPI(
 )
 app.include_router(auth_router)
 app.include_router(settings_router)
+app.include_router(maintenance_router)
 app.include_router(device_router)
 app.add_middleware(
     CORSMiddleware,
@@ -2464,6 +2466,48 @@ def generate_portfolio_report_pdf(
                 "portfolio PDF report"
             ),
         )
+
+
+
+# ============================================================
+# PORTFOLIO / ALL-FACILITIES AI ANALYSIS
+# ============================================================
+@app.post("/api/reports/portfolio/ai-analysis")
+def portfolio_report_ai_analysis(period: str="24h", db: Session=Depends(get_db)):
+    from report_engine import build_portfolio_report_data, resolve_period
+    try:
+        start,end=resolve_period(period)
+        report=build_portfolio_report_data(db,start,end)
+        rows=[]
+        totals={'energy_kwh':0.0,'expected_energy_kwh':0.0,'water_kl':0.0,'expected_water_kl':0.0,'anomaly_count':0,'critical_facilities':0,'attention_facilities':0}
+        def num(v):
+            try:return float(v)
+            except:return None
+        for item in report.get('facilities',[]):
+            f=item.get('facility') or {}; rt=item.get('realtime') or {}; data=rt.get('data') or {}; det=rt.get('detection') or {}
+            code=f.get('facility_code') or item.get('facility_code'); name=f.get('facility_name') or code
+            energy=num(f.get('energy_kwh')); energy=energy if energy is not None else num(data.get('energy_kwh'))
+            water=num(f.get('water_kl')); water=water if water is not None else num(data.get('water_kl'))
+            ee=num(f.get('expected_energy_kwh')); ee=ee if ee is not None else num(data.get('expected_energy_kwh'))
+            ew=num(f.get('expected_water_kl')); ew=ew if ew is not None else num(data.get('expected_water_kl'))
+            ev=((energy-ee)/ee*100) if energy is not None and ee else None; wv=((water-ew)/ew*100) if water is not None and ew else None
+            ac=int(det.get('anomaly_count') or 0); status=det.get('facility_status') or f.get('facility_status') or 'unknown'
+            for key,val in [('energy_kwh',energy),('expected_energy_kwh',ee),('water_kl',water),('expected_water_kl',ew)]:
+                if val is not None: totals[key]+=val
+            totals['anomaly_count']+=ac
+            sl=str(status).lower()
+            if sl=='critical': totals['critical_facilities']+=1
+            elif sl in {'attention','warning'}: totals['attention_facilities']+=1
+            rows.append({'facility_code':code,'facility_name':name,'status':status,'energy_kwh':energy,'expected_energy_kwh':ee,'energy_variance_percent':round(ev,2) if ev is not None else None,'water_kl':water,'expected_water_kl':ew,'water_variance_percent':round(wv,2) if wv is not None else None,'anomaly_count':ac,'primary_anomaly':det.get('primary_anomaly')})
+        totals={k:round(v,3) if isinstance(v,float) else v for k,v in totals.items()}
+        evidence={'report_metadata':{'period':period,'start':start.isoformat(),'end':end.isoformat(),'facility_count':len(rows),'generated_at':datetime.now(timezone.utc).isoformat()},'portfolio_totals':totals,'facilities':rows}
+        result=generate_portfolio_report_analysis(evidence)
+        return {'scope':'portfolio','period':period,'facility_count':len(rows),'success':result.get('success',False),'model':result.get('model'),'evidence_summary':totals,'analysis':result.get('analysis'),'error':result.get('error')}
+    except ValueError as exc: raise HTTPException(status_code=400,detail=str(exc))
+    except Exception as exc:
+        print(f'[Portfolio AI] Error -> {exc}')
+        raise HTTPException(status_code=500,detail=f'Portfolio AI analysis failed: {exc}')
+
 
 @app.post("/api/reports/facilities/{facility_code}/ai-analysis")
 def facility_report_ai_analysis(

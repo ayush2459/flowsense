@@ -1,0 +1,846 @@
+.maintenance-page {
+  min-height: 100%;
+  padding: 28px;
+  max-width: 1600px;
+  margin: 0 auto;
+  color: #e5e7eb;
+}
+
+
+/* ============================================================
+   HEADER
+   ============================================================ */
+
+.maintenance-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 24px;
+}
+
+.maintenance-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #60a5fa;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  margin-bottom: 8px;
+}
+
+.maintenance-header h1 {
+  margin: 0;
+  color: #f8fafc;
+  font-size: 30px;
+  line-height: 1.15;
+}
+
+.maintenance-header p {
+  margin: 8px 0 0;
+  max-width: 760px;
+  color: #94a3b8;
+  line-height: 1.55;
+}
+
+.maintenance-header-actions {
+  display: flex;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+
+/* ============================================================
+   BUTTONS
+   ============================================================ */
+
+.maintenance-primary-btn,
+.maintenance-secondary-btn {
+  border-radius: 10px;
+  padding: 10px 15px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background 0.2s ease,
+    border-color 0.2s ease,
+    transform 0.15s ease,
+    opacity 0.2s ease;
+}
+
+.maintenance-primary-btn {
+  border: 1px solid #2563eb;
+  background: #2563eb;
+  color: #ffffff;
+}
+
+.maintenance-primary-btn:hover {
+  background: #1d4ed8;
+  transform: translateY(-1px);
+}
+
+.maintenance-secondary-btn {
+  border: 1px solid #334155;
+  background: #172033;
+  color: #dbeafe;
+}
+
+.maintenance-secondary-btn:hover {
+  background: #1e293b;
+  border-color: #475569;
+}
+
+.maintenance-primary-btn:disabled,
+.maintenance-secondary-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+
+/* ============================================================
+   ERROR
+   ============================================================ */
+
+.maintenance-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 15px;
+  border: 1px solid #7f1d1d;
+  background: #2a1418;
+  color: #fca5a5;
+  border-radius: 10px;
+  margin-bottom: 18px;
+}
+
+.maintenance-error span {
+  flex: 1;
+}
+
+.maintenance-error button {
+  border: 0;
+  background: transparent;
+  color: #fca5a5;
+  cursor: pointer;
+  display: flex;
+}
+
+
+/* ============================================================
+   KPI GRID
+   ============================================================ */
+
+.maintenance-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.maintenance-kpi {
+  background: #111827;
+  border: 1px solid #253044;
+  border-radius: 14px;
+  padding: 18px;
+  min-height: 125px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+}
+
+.maintenance-kpi-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #172554;
+  color: #60a5fa;
+  margin-bottom: 12px;
+}
+
+.maintenance-kpi-icon.upcoming {
+  background: #2a1f0e;
+  color: #fbbf24;
+}
+
+.maintenance-kpi-icon.overdue {
+  background: #2a1418;
+  color: #f87171;
+}
+
+.maintenance-kpi-icon.repair {
+  background: #2a1a0e;
+  color: #fb923c;
+}
+
+.maintenance-kpi-icon.cost {
+  background: #241536;
+  color: #c084fc;
+}
+
+.maintenance-kpi span {
+  display: block;
+  color: #94a3b8;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+.maintenance-kpi strong {
+  display: block;
+  color: #f8fafc;
+  font-size: 25px;
+  line-height: 1.2;
+}
+
+.maintenance-kpi small {
+  display: block;
+  color: #64748b;
+  margin-top: 5px;
+}
+
+
+/* ============================================================
+   SECONDARY METRICS
+   ============================================================ */
+
+.maintenance-secondary-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.maintenance-mini-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 68px;
+  padding: 14px 16px;
+  background: #0f172a;
+  border: 1px solid #253044;
+  border-radius: 12px;
+  color: #60a5fa;
+}
+
+.maintenance-mini-card div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.maintenance-mini-card span {
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.maintenance-mini-card strong {
+  color: #f8fafc;
+  font-size: 18px;
+}
+
+
+/* ============================================================
+   INFO
+   ============================================================ */
+
+.maintenance-info {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  padding: 14px 16px;
+  border: 1px solid #1e3a5f;
+  background: #0d1b2f;
+  color: #93c5fd;
+  border-radius: 12px;
+  margin-bottom: 18px;
+}
+
+.maintenance-info svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.maintenance-info strong {
+  display: block;
+  color: #dbeafe;
+  font-size: 13px;
+  margin-bottom: 3px;
+}
+
+.maintenance-info span {
+  display: block;
+  color: #94a3b8;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+
+/* ============================================================
+   MAIN CARD
+   ============================================================ */
+
+.maintenance-card {
+  background: #111827;
+  border: 1px solid #253044;
+  border-radius: 15px;
+  overflow: hidden;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.14);
+}
+
+.maintenance-card-head {
+  padding: 19px 20px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  border-bottom: 1px solid #253044;
+}
+
+.maintenance-card-head h2 {
+  margin: 0;
+  color: #f8fafc;
+  font-size: 18px;
+}
+
+.maintenance-card-head p {
+  margin: 4px 0 0;
+  color: #64748b;
+  font-size: 13px;
+}
+
+
+/* ============================================================
+   FILTERS
+   ============================================================ */
+
+.maintenance-filters {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+}
+
+.maintenance-search {
+  width: 280px;
+  height: 38px;
+  border: 1px solid #334155;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  color: #64748b;
+  background: #0f172a;
+}
+
+.maintenance-search:focus-within {
+  border-color: #3b82f6;
+}
+
+.maintenance-search input {
+  border: 0;
+  outline: 0;
+  width: 100%;
+  background: transparent;
+  color: #e5e7eb;
+  font-size: 13px;
+}
+
+.maintenance-search input::placeholder {
+  color: #64748b;
+}
+
+.maintenance-search button {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  color: #64748b;
+  display: flex;
+}
+
+.maintenance-filters select {
+  height: 38px;
+  border: 1px solid #334155;
+  border-radius: 9px;
+  background: #0f172a;
+  padding: 0 10px;
+  color: #cbd5e1;
+  outline: none;
+}
+
+.maintenance-filters select:focus {
+  border-color: #3b82f6;
+}
+
+
+/* ============================================================
+   TABLE
+   ============================================================ */
+
+.maintenance-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.maintenance-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 1100px;
+}
+
+.maintenance-table th {
+  background: #0f172a;
+  color: #64748b;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  text-align: left;
+  padding: 12px 14px;
+  white-space: nowrap;
+}
+
+.maintenance-table td {
+  padding: 14px;
+  border-top: 1px solid #1f2937;
+  vertical-align: middle;
+  font-size: 13px;
+  color: #cbd5e1;
+}
+
+.maintenance-table tbody tr {
+  transition: background 0.15s ease;
+}
+
+.maintenance-table tbody tr:hover {
+  background: #172033;
+}
+
+
+/* ============================================================
+   DEVICE
+   ============================================================ */
+
+.maintenance-device {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 175px;
+}
+
+.maintenance-device-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: #172554;
+  color: #60a5fa;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.maintenance-device strong,
+.maintenance-device span {
+  display: block;
+}
+
+.maintenance-device strong {
+  color: #f8fafc;
+  font-size: 13px;
+}
+
+.maintenance-device span {
+  color: #64748b;
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+
+/* ============================================================
+   SERVICE
+   ============================================================ */
+
+.maintenance-service strong,
+.maintenance-service span {
+  display: block;
+}
+
+.maintenance-service strong {
+  color: #e2e8f0;
+  text-transform: capitalize;
+}
+
+.maintenance-service span {
+  max-width: 220px;
+  margin-top: 3px;
+  color: #64748b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+
+/* ============================================================
+   PERSON / VENDOR
+   ============================================================ */
+
+.maintenance-person {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.maintenance-person span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  color: #94a3b8;
+}
+
+
+/* ============================================================
+   BADGES
+   ============================================================ */
+
+.maintenance-badge,
+.maintenance-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 5px 9px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.maintenance-badge.warning {
+  background: #2a1a0e;
+  color: #fb923c;
+  border: 1px solid #7c2d12;
+}
+
+.maintenance-badge.success {
+  background: #0d2419;
+  color: #4ade80;
+  border: 1px solid #166534;
+}
+
+.maintenance-badge.neutral {
+  background: #1e293b;
+  color: #94a3b8;
+  border: 1px solid #334155;
+}
+
+.maintenance-status.completed {
+  background: #0d2419;
+  color: #4ade80;
+  border: 1px solid #166534;
+}
+
+.maintenance-status.upcoming {
+  background: #2a1f0e;
+  color: #fbbf24;
+  border: 1px solid #854d0e;
+}
+
+.maintenance-status.overdue {
+  background: #2a1418;
+  color: #f87171;
+  border: 1px solid #7f1d1d;
+}
+
+.maintenance-status.scheduled {
+  background: #172554;
+  color: #60a5fa;
+  border: 1px solid #1d4ed8;
+}
+
+
+/* ============================================================
+   EMPTY / LOADING
+   ============================================================ */
+
+.maintenance-empty {
+  min-height: 300px;
+  padding: 45px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 9px;
+  text-align: center;
+  color: #64748b;
+}
+
+.maintenance-empty strong {
+  color: #e2e8f0;
+  font-size: 16px;
+}
+
+.maintenance-empty span {
+  max-width: 520px;
+  line-height: 1.5;
+}
+
+
+/* ============================================================
+   MODAL
+   ============================================================ */
+
+.maintenance-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(2, 6, 23, 0.78);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.maintenance-modal {
+  width: min(760px, 100%);
+  max-height: 90vh;
+  overflow-y: auto;
+  background: #111827;
+  border: 1px solid #334155;
+  border-radius: 16px;
+  box-shadow: 0 25px 70px rgba(0, 0, 0, 0.5);
+}
+
+.maintenance-modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 20px 22px;
+  border-bottom: 1px solid #253044;
+}
+
+.maintenance-modal-head h2 {
+  margin: 0;
+  color: #f8fafc;
+  font-size: 20px;
+}
+
+.maintenance-modal-head p {
+  margin: 5px 0 0;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.maintenance-modal-head button {
+  border: 0;
+  background: #1e293b;
+  color: #cbd5e1;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+
+/* ============================================================
+   FORM
+   ============================================================ */
+
+.maintenance-form {
+  padding: 22px;
+}
+
+.maintenance-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 15px;
+}
+
+.maintenance-form input,
+.maintenance-form select,
+.maintenance-form textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #334155;
+  border-radius: 9px;
+  padding: 10px 11px;
+  outline: none;
+  font: inherit;
+  font-size: 13px;
+  color: #e2e8f0;
+  background: #0f172a;
+}
+
+.maintenance-form input::placeholder,
+.maintenance-form textarea::placeholder {
+  color: #64748b;
+}
+
+.maintenance-form option {
+  background: #111827;
+  color: #e2e8f0;
+}
+
+.maintenance-form textarea {
+  resize: vertical;
+}
+
+.maintenance-form input:focus,
+.maintenance-form select:focus,
+.maintenance-form textarea:focus {
+  border-color: #3b82f6;
+  box-shadow:
+    0 0 0 3px rgba(59, 130, 246, 0.12);
+}
+
+.maintenance-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 14px;
+}
+
+.maintenance-checkbox-row {
+  display: flex;
+  gap: 22px;
+  margin: 3px 0 17px;
+}
+
+.maintenance-form .maintenance-check {
+  margin: 0;
+  flex-direction: row;
+  align-items: center;
+  gap: 7px;
+  font-weight: 600;
+  color: #cbd5e1;
+}
+
+.maintenance-check input {
+  width: auto;
+}
+
+.maintenance-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 5px;
+}
+
+
+/* ============================================================
+   ANIMATION
+   ============================================================ */
+
+.maintenance-spin {
+  animation:
+    maintenanceSpin 0.9s linear infinite;
+}
+
+@keyframes maintenanceSpin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+
+@media (max-width: 1300px) {
+  .maintenance-kpi-grid {
+    grid-template-columns:
+      repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1200px) {
+  .maintenance-card-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .maintenance-filters {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .maintenance-search {
+    flex: 1;
+  }
+}
+
+@media (max-width: 900px) {
+  .maintenance-secondary-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .maintenance-header {
+    flex-direction: column;
+  }
+
+  .maintenance-header-actions {
+    width: 100%;
+  }
+
+  .maintenance-header-actions button {
+    flex: 1;
+  }
+}
+
+@media (max-width: 760px) {
+  .maintenance-page {
+    padding: 18px;
+  }
+
+  .maintenance-kpi-grid {
+    grid-template-columns:
+      repeat(2, minmax(0, 1fr));
+  }
+
+  .maintenance-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .maintenance-filters {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .maintenance-search {
+    width: auto;
+  }
+
+  .maintenance-filters select {
+    width: 100%;
+  }
+}
+
+@media (max-width: 520px) {
+  .maintenance-kpi-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .maintenance-header-actions {
+    flex-direction: column;
+  }
+
+  .maintenance-checkbox-row {
+    flex-direction: column;
+    gap: 10px;
+  }
+}

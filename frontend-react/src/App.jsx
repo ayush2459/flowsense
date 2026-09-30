@@ -18,6 +18,7 @@ import {
   Sparkles,
   FileText,
   Cpu,
+  Wrench,
   Settings,
   Gauge,
   ShieldCheck,
@@ -52,11 +53,13 @@ import Register from "./pages/Register";
 import ResetPassword from "./pages/ResetPassword";
 import ProtectedRoute from "./components/ProtectedRoute";
 import SettingsPage from "./pages/SettingsPage";
+import MaintenancePage from "./pages/MaintenancePage";
 import { api, API_BASE_URL } from "./services/api";
 import RealtimeOverview from "./RealtimeOverview";
 import { useFlowSense } from "./context/FlowSenseContext";
 import { useAuth } from "./auth/AuthContext";
 import "./App.css";
+import AIInsightsPage from "./pages/AIInsightsPage";
 
 
 const navItems = [
@@ -69,6 +72,7 @@ const navItems = [
   ["/analytics", "Analytics", BarChart3],
   ["/ai-insights", "AI Insights", Sparkles],
   ["/devices", "Devices", Cpu],
+  ["/maintenance", "Maintenance", Wrench],
   ["/settings", "Settings", Settings]
 ];
 
@@ -85,7 +89,7 @@ const fmtTime = (v) =>
         hour: "2-digit",
         minute: "2-digit"
       })
-    : "Ã¢â‚¬â€";
+    : "ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â";
 
 function getStatus(facility, anomalies) {
   const rows = anomalies.filter(
@@ -168,7 +172,7 @@ function PanelHead({ icon: Icon, title, sub, to }) {
           className="link"
           onClick={() => navigate(to)}
         >
-          View Details Ã¢â€ â€™
+          View Details ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢
         </button>
       )}
     </div>
@@ -837,7 +841,7 @@ function Overview({
                       </b>
 
                       <span>
-                        {a.facility_code} Ã‚Â·{" "}
+                        {a.facility_code} Ãƒâ€šÃ‚Â·{" "}
                         {a.description ||
                           a.sensor_name ||
                           "Detected anomaly"}
@@ -981,7 +985,7 @@ function Facilities({
                         )
                       }
                     >
-                      Open Ã¢â€ â€™
+                      Open ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢
                     </button>
                   </td>
                 </tr>
@@ -1253,7 +1257,7 @@ function Resource({
                 key={facility.facility_code}
                 value={facility.facility_code}
               >
-                {facility.facility_name} Ã‚Â·{" "}
+                {facility.facility_name} Ãƒâ€šÃ‚Â·{" "}
                 {facility.facility_code}
               </option>
             ))}
@@ -1268,8 +1272,8 @@ function Resource({
           }`}
         >
           {connection === "live"
-            ? "Ã¢â€”Â Live"
-            : "Ã¢â€”Â Reconnecting"}
+            ? "ÃƒÂ¢Ã¢â‚¬â€Ã‚Â Live"
+            : "ÃƒÂ¢Ã¢â‚¬â€Ã‚Â Reconnecting"}
         </span>
       </div>
 
@@ -1384,7 +1388,7 @@ function Resource({
               {selectedFacility
                 ? selectedFacility.facility_name
                 : "All facilities"}{" "}
-              Ã‚Â· live WebSocket history
+              Ãƒâ€šÃ‚Â· live WebSocket history
             </p>
           </div>
 
@@ -1711,7 +1715,7 @@ function Alerts({ anomalies }) {
                       ? new Date(
                           a.detected_at
                         ).toLocaleString()
-                      : "Ã¢â‚¬â€"}
+                      : "ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â"}
                   </td>
 
                   <td>
@@ -1724,7 +1728,7 @@ function Alerts({ anomalies }) {
                         )
                       }
                     >
-                      Investigate Ã¢â€ â€™
+                      Investigate ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢
                     </button>
                   </td>
                 </tr>
@@ -1825,7 +1829,7 @@ function Detail({
   return (
     <Page
       title={facility.facility_name}
-      sub={`${facility.facility_code} Ã‚Â· ${facility.city}, ${facility.state}`}
+      sub={`${facility.facility_code} Ãƒâ€šÃ‚Â· ${facility.city}, ${facility.state}`}
     >
       <div className="detail-grid">
         <Kpi
@@ -2829,75 +2833,18 @@ function Analytics({ facilities }) {
 }
 
 function AIInsights({
-  anomalies
+  anomalies,
+  facilities
 }) {
-  const navigate = useNavigate();
-
-  const recommendations = [
-    [
-      "Investigate abnormal energy",
-      "Compare affected equipment against its expected baseline.",
-      "High"
-    ],
-    [
-      "Investigate water loss",
-      "Review pressure, valves and nearby water zones.",
-      "High"
-    ],
-    [
-      "Inspect equipment vibration",
-      "Repeated vibration anomalies may indicate equipment wear.",
-      "Medium"
-    ]
-  ];
-
   return (
     <Page
       title="AI Insights"
-      sub="Action-oriented recommendations generated from FlowSense signals"
+      sub="Evidence-backed intelligence for any FlowSense facility"
     >
-      <div className="rec-grid">
-        {recommendations.map(
-          ([title, description, priority]) => (
-            <button
-              type="button"
-              className="rec"
-              key={title}
-              onClick={() =>
-                navigate("/alerts")
-              }
-            >
-              <div>
-                <Lightbulb />
-              </div>
-
-              <span>
-                <b>{title}</b>
-                <small>
-                  {description}
-                </small>
-              </span>
-
-              <em>{priority}</em>
-            </button>
-          )
-        )}
-      </div>
-
-      <Card className="workspace-card">
-        <PanelHead
-          icon={Sparkles}
-          title="Recent AI Context"
-          sub={`${anomalies.length} recent anomaly records available`}
-        />
-
-        <p className="workspace-copy">
-          AI recommendations are linked to the
-          live anomaly and resource monitoring
-          pipeline. Open an alert to investigate
-          the affected facility.
-        </p>
-      </Card>
+      <AIInsightsPage
+        anomalies={anomalies}
+        facilities={facilities}
+      />
     </Page>
   );
 }
@@ -3290,7 +3237,7 @@ function Reports() {
                 }
               >
                 <option value="all">
-                  All Facilities Â· {facilityList.length}
+                  All Facilities Ã‚Â· {facilityList.length}
                 </option>
 
                 {facilityList.map((item) => (
@@ -3344,7 +3291,7 @@ function Reports() {
                 <div className="reports-facility-meta">
                   {selected.facility_code}
                   {selected.city
-                    ? ` â€¢ ${selected.city}`
+                    ? ` Ã¢â‚¬Â¢ ${selected.city}`
                     : ""}
                   {selected.state
                     ? `, ${selected.state}`
@@ -3576,7 +3523,7 @@ function Reports() {
                       realtimeData.temperature_c,
                       live.temperature_c,
                       1,
-                      " Â°C"
+                      " Ã‚Â°C"
                     )}
                   />
                   <MetricItem
@@ -3714,7 +3661,7 @@ function Reports() {
                     Historical records are supplementary only.
                   </p>
                   <span className="reports-ai-model">
-                    Local model Â· llama3.2:3b
+                    Local model Ã‚Â· llama3.2:3b
                   </span>
                 </div>
 
@@ -3856,8 +3803,8 @@ function Reports() {
                 <span className="live-dot active" />
                 <strong>Realtime stream active</strong>
                 <small>
-                  {statusCounts.Healthy} healthy Â·{" "}
-                  {statusCounts.Attention} attention Â·{" "}
+                  {statusCounts.Healthy} healthy Ã‚Â·{" "}
+                  {statusCounts.Attention} attention Ã‚Â·{" "}
                   {statusCounts.Critical} critical
                 </small>
               </div>
@@ -3981,7 +3928,7 @@ function Reports() {
                             <small>
                               {item.facility_code}
                               {item.city
-                                ? ` Â· ${item.city}`
+                                ? ` Ã‚Â· ${item.city}`
                                 : ""}
                             </small>
                           </td>
@@ -4052,7 +3999,7 @@ function Reports() {
                                 )
                               }
                             >
-                              Open â†’
+                              Open Ã¢â€ â€™
                             </button>
                           </td>
                         </tr>
@@ -4104,6 +4051,25 @@ function Devices() {
   const [detailUptime, setDetailUptime] = useState(null);
   const [deviceWsStatus, setDeviceWsStatus] = useState("connecting");
   const selectedDeviceRef = useRef(null);
+  const devicesRef = useRef([]);
+
+  const getOfflineReason = (health) => {
+    if (health?.offline_reason) {
+      return String(health.offline_reason);
+    }
+
+    const status = String(health?.status || "").toLowerCase();
+    if (status !== "offline") return null;
+
+    const seconds = Number(health?.seconds_since_last_seen);
+    const timeout = Number(health?.heartbeat_timeout_seconds || 120);
+
+    if (Number.isFinite(seconds)) {
+      return `No heartbeat received for ${Math.round(seconds)}s (heartbeat timeout: ${Math.round(timeout)}s)`;
+    }
+
+    return "No recent heartbeat received from the device";
+  };
 
   useEffect(() => {
     selectedDeviceRef.current = selectedDevice;
@@ -4125,6 +4091,7 @@ function Devices() {
         ? response
         : response?.devices || [];
 
+      devicesRef.current = rows;
       setDevices(rows);
     } catch (err) {
       console.error("Device inventory error:", err);
@@ -4276,6 +4243,10 @@ function Devices() {
               firmware_version:
                 message.firmware_version ||
                 device.firmware_version,
+              offline_reason: null,
+              seconds_since_last_seen: 0,
+              heartbeat_timeout_seconds:
+                device.heartbeat_timeout_seconds || 120,
             };
           })
         );
@@ -4450,6 +4421,146 @@ function Devices() {
   };
 
   useEffect(() => {
+    let stopped = false;
+
+    const refreshAllDeviceHealth = async () => {
+      const currentDevices = devicesRef.current;
+      if (!currentDevices.length) return;
+
+      const results = await Promise.allSettled(
+        currentDevices.map(async (device) => {
+          const health = await api.deviceRealtimeHealth(
+            device.device_code
+          );
+          return { device, health };
+        })
+      );
+
+      if (stopped) return;
+
+      const healthByCode = new Map();
+      for (const result of results) {
+        if (result.status !== "fulfilled") continue;
+        const { device, health } = result.value;
+        if (health?.device_code || device?.device_code) {
+          healthByCode.set(
+            health?.device_code || device.device_code,
+            health
+          );
+        }
+      }
+
+      if (!healthByCode.size) return;
+
+      setDevices((currentDevices) => {
+        const updated = currentDevices.map((device) => {
+          const health = healthByCode.get(device.device_code);
+          if (!health) return device;
+
+          return {
+            ...device,
+            status:
+              health.database_status ||
+              device.status,
+            realtime_status:
+              health.status ||
+              device.realtime_status ||
+              device.status,
+            last_seen_at:
+              health.last_seen_at ||
+              device.last_seen_at,
+            network_type:
+              health.network_type ||
+              device.network_type,
+            network_identifier:
+              health.network_identifier ||
+              device.network_identifier,
+            offline_reason:
+              getOfflineReason(health),
+            seconds_since_last_seen:
+              health.seconds_since_last_seen,
+            heartbeat_timeout_seconds:
+              health.heartbeat_timeout_seconds ||
+              device.heartbeat_timeout_seconds ||
+              120,
+          };
+        });
+
+        devicesRef.current = updated;
+        return updated;
+      });
+
+      const selected = selectedDeviceRef.current;
+      if (selected?.device_code) {
+        const selectedHealth = healthByCode.get(
+          selected.device_code
+        );
+
+        if (selectedHealth) {
+          setSelectedDevice((currentSelected) =>
+            currentSelected
+              ? {
+                  ...currentSelected,
+                  status:
+                    selectedHealth.database_status ||
+                    currentSelected.status,
+                  realtime_status:
+                    selectedHealth.status ||
+                    currentSelected.realtime_status ||
+                    currentSelected.status,
+                  last_seen_at:
+                    selectedHealth.last_seen_at ||
+                    currentSelected.last_seen_at,
+                  offline_reason:
+                    getOfflineReason(selectedHealth),
+                  seconds_since_last_seen:
+                    selectedHealth.seconds_since_last_seen,
+                  heartbeat_timeout_seconds:
+                    selectedHealth.heartbeat_timeout_seconds ||
+                    currentSelected.heartbeat_timeout_seconds ||
+                    120,
+                }
+              : currentSelected
+          );
+
+          setDetailHealth((currentHealth) => {
+            const currentSeen = currentHealth?.last_seen_at
+              ? new Date(currentHealth.last_seen_at).getTime()
+              : 0;
+            const incomingSeen = selectedHealth?.last_seen_at
+              ? new Date(selectedHealth.last_seen_at).getTime()
+              : 0;
+
+            if (
+              selectedHealth?.status === "offline" ||
+              incomingSeen >= currentSeen
+            ) {
+              return {
+                ...selectedHealth,
+                offline_reason:
+                  getOfflineReason(selectedHealth),
+              };
+            }
+
+            return currentHealth;
+          });
+        }
+      }
+    };
+
+    refreshAllDeviceHealth();
+    const interval = window.setInterval(
+      refreshAllDeviceHealth,
+      5000
+    );
+
+    return () => {
+      stopped = true;
+      window.clearInterval(interval);
+    };
+  }, []);
+
+  useEffect(() => {
   if (!selectedDevice) return;
 
   let stopped = false;
@@ -4581,12 +4692,12 @@ function Devices() {
   ];
 
   const formatDateTime = (value) => {
-    if (!value) return "â€”";
+    if (!value) return "Ã¢â‚¬â€";
 
     const date = new Date(value);
 
     if (Number.isNaN(date.getTime())) {
-      return "â€”";
+      return "Ã¢â‚¬â€";
     }
 
     return date.toLocaleString([], {
@@ -4599,12 +4710,12 @@ function Devices() {
   };
 
   const formatDate = (value) => {
-    if (!value) return "â€”";
+    if (!value) return "Ã¢â‚¬â€";
 
     const date = new Date(value);
 
     if (Number.isNaN(date.getTime())) {
-      return "â€”";
+      return "Ã¢â‚¬â€";
     }
 
     return date.toLocaleDateString([], {
@@ -4944,7 +5055,7 @@ function Devices() {
                               <strong>
                                 {
                                   device.facility_code ||
-                                  "â€”"
+                                  "Ã¢â‚¬â€"
                                 }
                               </strong>
 
@@ -4962,7 +5073,7 @@ function Devices() {
                               <strong>
                                 {
                                   device.network_type ||
-                                  "â€”"
+                                  "Ã¢â‚¬â€"
                                 }
                               </strong>
 
@@ -4976,14 +5087,36 @@ function Devices() {
                           </td>
 
                           <td>
-                            <span
-                              className={`device-status-badge ${status}`}
-                            >
-                              <span className="status-dot" />
-                              {statusLabel(
-                                status
+                            <div>
+                              <span
+                                className={`device-status-badge ${status}`}
+                                title={
+                                  status === "offline"
+                                    ? device.offline_reason ||
+                                      "No recent heartbeat received from the device"
+                                    : ""
+                                }
+                              >
+                                <span className="status-dot" />
+                                {statusLabel(
+                                  status
+                                )}
+                              </span>
+
+                              {status === "offline" && (
+                                <div
+                                  style={{
+                                    marginTop: "4px",
+                                    fontSize: "11px",
+                                    opacity: 0.75,
+                                    maxWidth: "220px",
+                                  }}
+                                >
+                                  {device.offline_reason ||
+                                    "No recent heartbeat received"}
+                                </div>
                               )}
-                            </span>
+                            </div>
                           </td>
 
                           <td>
@@ -5163,7 +5296,7 @@ function Devices() {
                     <strong>
                       {
                         selectedDevice.device_model ||
-                        "â€”"
+                        "Ã¢â‚¬â€"
                       }
                     </strong>
                   </div>
@@ -5173,7 +5306,7 @@ function Devices() {
                     <strong>
                       {
                         selectedDevice.firmware_version ||
-                        "â€”"
+                        "Ã¢â‚¬â€"
                       }
                     </strong>
                   </div>
@@ -5183,7 +5316,7 @@ function Devices() {
                     <strong>
                       {
                         selectedDevice.communication_protocol ||
-                        "â€”"
+                        "Ã¢â‚¬â€"
                       }
                     </strong>
                   </div>
@@ -5193,7 +5326,7 @@ function Devices() {
                     <strong>
                       {
                         selectedDevice.serial_number ||
-                        "â€”"
+                        "Ã¢â‚¬â€"
                       }
                     </strong>
                   </div>
@@ -5212,7 +5345,7 @@ function Devices() {
                       {
                         detailHealth?.network_type ||
                         selectedDevice.network_type ||
-                        "â€”"
+                        "Ã¢â‚¬â€"
                       }
                     </strong>
                   </div>
@@ -5223,7 +5356,7 @@ function Devices() {
                       {
                         detailHealth?.network_identifier ||
                         selectedDevice.network_identifier ||
-                        "â€”"
+                        "Ã¢â‚¬â€"
                       }
                     </strong>
                   </div>
@@ -5234,7 +5367,7 @@ function Devices() {
                       {
                         detailHealth?.database_status ||
                         selectedDevice.status ||
-                        "â€”"
+                        "Ã¢â‚¬â€"
                       }
                     </strong>
                   </div>
@@ -5244,7 +5377,7 @@ function Devices() {
                     <strong>
                       {
                         detailHealth?.status ||
-                        "â€”"
+                        "Ã¢â‚¬â€"
                       }
                     </strong>
                   </div>
@@ -5254,7 +5387,8 @@ function Devices() {
                     <strong>
                       {
                         detailHealth?.offline_reason ||
-                        "None"
+                        getOfflineReason(detailHealth) ||
+                        "No offline reason â€” device is currently online"
                       }
                     </strong>
                   </div>
@@ -5299,7 +5433,7 @@ function Devices() {
                     <strong>
                       {
                         selectedDevice.decommission_reason ||
-                        "â€”"
+                        "Ã¢â‚¬â€"
                       }
                     </strong>
                   </div>
@@ -5347,7 +5481,11 @@ function Devices() {
                         ? `${Number(
                             detailUptime.uptime_percent
                           ).toFixed(1)}%`
-                        : "â€”"}
+                        : detailUptime?.observed_uptime_percent != null
+                        ? `${Number(
+                            detailUptime.observed_uptime_percent
+                          ).toFixed(1)}% (observed)`
+                        : "Ã¢â‚¬â€"}
                     </strong>
                   </div>
 
@@ -5359,7 +5497,7 @@ function Devices() {
                           ? `${Number(
                               detailUptime.observed_uptime_percent
                             ).toFixed(1)}%`
-                          : "â€”"}
+                          : "Ã¢â‚¬â€"}
                       </div>
 
                       <div>
@@ -5373,7 +5511,7 @@ function Devices() {
 
                       {!detailUptime.data_complete && (
                         <div>
-                          Complete 24h uptime will be available after enough real heartbeat history is collected.
+                          Showing observed uptime from the real heartbeat history currently available.
                         </div>
                       )}
                     </div>
@@ -5521,11 +5659,7 @@ function App() {
 
           <Route
             path="/ai-insights"
-            element={
-              <AIInsights
-                anomalies={alerts}
-              />
-            }
+            element={<AIInsightsPage />}
           />
 
           <Route
@@ -5537,7 +5671,10 @@ function App() {
             path="/devices"
             element={<Devices />}
           />
-
+	  <Route
+  	    path="/maintenance"
+            element={<MaintenancePage />}
+          />
           <Route
             path="/settings"
             element={<SettingsPage />}
@@ -5549,6 +5686,7 @@ function App() {
 }
 
 export default App;
+
 
 
 

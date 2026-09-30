@@ -296,7 +296,9 @@ You are the FlowSense Energy & Water Intelligence assistant.
 
 Analyze ONLY the FlowSense evidence supplied by the application.
 
-IMPORTANT RULES:\n\n1. Never invent measurements, anomalies, alerts, causes, savings, or events.\n\n2. FlowSense backend calculations are authoritative.\n\n3. REALTIME DATA IS AUTHORITATIVE FOR THE CURRENT REPORT. If realtime.available is true, ALL CURRENT ENERGY, WATER, POWER, SENSOR, EFFICIENCY, AND ANOMALY CONCLUSIONS MUST COME FROM the realtime section. Do NOT use historical_data.latest_energy or historical_data.latest_water for current values.\n\n4. If detection.anomaly_count is greater than 0 OR detection.primary_anomaly contains a detected anomaly, explicitly report the anomaly. Do NOT say no anomalies were detected.\n\n5. When a primary realtime anomaly exists, report the supplied anomaly type, severity, confidence, likely source, area, detection method, evidence, and estimated loss when those fields are available.\n\n6. If realtime data is available, do not describe the facility as healthy when the realtime detection facility_status indicates attention, warning, critical, or another non-healthy state.\n\n7. Treat realtime telemetry separately from historical data. Historical data must never override realtime telemetry or realtime detection. When realtime.available is true, historical_data may only be used for historical context and reading counts, never as the current measurement.\n\n8. If historical data is unavailable or limited, state that briefly, but do not let that obscure realtime findings.\n\n9. Do not recalculate authoritative metrics.\n\n10. Recommendations must be practical and directly supported by the supplied realtime detection evidence.\n\n11. Keep the response concise and professional.\n\n12. Do not mention that you are an AI language model.
+IMPORTANT RULES:\n\n1. Never invent measurements, anomalies, alerts, causes, savings, or events.\n\n2. FlowSense backend calculations are authoritative.\n\n3. REALTIME DATA IS AUTHORITATIVE FOR THE CURRENT REPORT. If realtime.available is true, ALL CURRENT ENERGY, WATER, POWER, SENSOR, EFFICIENCY, AND ANOMALY CONCLUSIONS MUST COME FROM the realtime section. Do NOT use historical_data.latest_energy or historical_data.latest_water for current values.\n\n4. If detection.anomaly_count is greater than 0 OR detection.primary_anomaly contains a detected anomaly, explicitly report the anomaly. Do NOT say no anomalies were detected.\n\n5. When a primary realtime anomaly exists, report the supplied anomaly type, severity, confidence, likely source, area, detection method, evidence, and estimated loss when those fields are available.\n\n6. If realtime data is available, do not describe the facility as healthy when the realtime detection facility_status indicates attention, warning, critical, or another non-healthy state.\n\n7. Treat realtime telemetry separately from historical data. Historical data must never override realtime telemetry or realtime detection. When realtime.available is true, historical_data may only be used for historical context and reading counts, never as the current measurement.\n\n8. If historical data is unavailable or limited, state that briefly, but do not let that obscure realtime findings.\n\n9. Do not recalculate authoritative metrics.
+When actual usage is above expected usage, do not describe it as "within expected range"; explicitly state that it is above expected and include the supplied percentage or variance when available.
+Do not call a value normal, within range, or healthy when the supplied evidence explicitly shows it is above the configured expected value.\n\n10. Recommendations must be practical and directly supported by the supplied realtime detection evidence.\n\n11. Keep the response concise and professional.\n\n12. Do not mention that you are an AI language model.
 
 Return ONLY valid JSON with exactly these fields:
 
@@ -372,7 +374,7 @@ Return ONLY valid JSON with exactly these fields:
 
         with urlopen(
             request,
-            timeout=90,
+            timeout=180,
         ) as response:
 
             result = json.loads(
@@ -445,3 +447,36 @@ Return ONLY valid JSON with exactly these fields:
             "error":
                 f"Ollama analysis failed: {exc}",
         }
+
+
+# ============================================================
+# PORTFOLIO / ALL-FACILITIES AI ANALYSIS
+# ============================================================
+def generate_portfolio_report_analysis(evidence):
+    import json
+    from urllib.request import Request, urlopen
+    system_prompt = """
+You are the FlowSense portfolio intelligence engine.
+Use ONLY supplied backend evidence. Never invent measurements, anomalies, causes, savings, events, or conditions.
+Backend calculations are authoritative. Positive variance from expected/target is ABOVE EXPECTED; negative variance is BELOW EXPECTED.
+Do not call KPI deviation an anomaly unless detection evidence says it is an anomaly.
+Identify facility codes when naming facilities. If evidence is missing, say unavailable.
+Return ONLY JSON with keys: summary, key_findings, energy_analysis, water_analysis, facilities_requiring_attention, recommendations, priority_actions.
+"""
+    payload={
+      'model':OLLAMA_MODEL,
+      'messages':[{'role':'system','content':system_prompt},{'role':'user','content':'FlowSense portfolio evidence:\n'+json.dumps(evidence,default=str,separators=(',',':'))}],
+      'stream':False,'format':'json','keep_alive':'10m',
+      'options':{'temperature':0.1,'num_predict':240}
+    }
+    try:
+        req=Request(OLLAMA_URL,data=json.dumps(payload).encode('utf-8'),headers={'Content-Type':'application/json'},method='POST')
+        with urlopen(req,timeout=180) as response: raw=response.read().decode('utf-8')
+        result=json.loads(raw); content=result.get('message',{}).get('content')
+        if not content: raise RuntimeError('Ollama returned empty portfolio analysis')
+        analysis=json.loads(content)
+        for k in ('summary','energy_analysis','water_analysis'): analysis.setdefault(k,'')
+        for k in ('key_findings','facilities_requiring_attention','recommendations','priority_actions'): analysis.setdefault(k,[])
+        return {'success':True,'model':OLLAMA_MODEL,'analysis':analysis,'error':None}
+    except Exception as exc:
+        return {'success':False,'model':OLLAMA_MODEL,'analysis':None,'error':str(exc)}
