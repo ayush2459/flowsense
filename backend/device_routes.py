@@ -131,12 +131,50 @@ def get_devices(
         .all()
     )
 
+    facility_rows = db.execute(
+        text("""
+            SELECT
+                facility_id,
+                facility_code,
+                facility_name
+            FROM facilities
+        """)
+    ).mappings().all()
+
+    facility_map = {
+        str(row["facility_id"]): {
+            "facility_code": row["facility_code"],
+            "facility_name": row["facility_name"],
+        }
+        for row in facility_rows
+    }
+
+    device_list = []
+
+    for device in devices:
+        device_data = device_to_dict(device)
+
+        facility = facility_map.get(
+            str(device.facility_id)
+        )
+
+        device_data["facility_code"] = (
+            facility["facility_code"]
+            if facility
+            else None
+        )
+
+        device_data["facility_name"] = (
+            facility["facility_name"]
+            if facility
+            else None
+        )
+
+        device_list.append(device_data)
+
     return {
-        "count": len(devices),
-        "devices": [
-            device_to_dict(device)
-            for device in devices
-        ],
+        "count": len(device_list),
+        "devices": device_list,
     }
 
 

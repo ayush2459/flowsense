@@ -29,6 +29,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from auth_routes import router as auth_router
+from settings_routes import router as settings_router
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
@@ -335,6 +336,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.include_router(auth_router)
+app.include_router(settings_router)
 app.include_router(device_router)
 app.add_middleware(
     CORSMiddleware,

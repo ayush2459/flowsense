@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Routes,
   Route,
@@ -51,6 +51,7 @@ import Login from "./pages/Login";
 import Register from "./pages/Register";
 import ResetPassword from "./pages/ResetPassword";
 import ProtectedRoute from "./components/ProtectedRoute";
+import SettingsPage from "./pages/SettingsPage";
 import { api, API_BASE_URL } from "./services/api";
 import RealtimeOverview from "./RealtimeOverview";
 import { useFlowSense } from "./context/FlowSenseContext";
@@ -84,7 +85,7 @@ const fmtTime = (v) =>
         hour: "2-digit",
         minute: "2-digit"
       })
-    : "â€”";
+    : "Ã¢â‚¬â€";
 
 function getStatus(facility, anomalies) {
   const rows = anomalies.filter(
@@ -167,7 +168,7 @@ function PanelHead({ icon: Icon, title, sub, to }) {
           className="link"
           onClick={() => navigate(to)}
         >
-          View Details â†’
+          View Details Ã¢â€ â€™
         </button>
       )}
     </div>
@@ -836,7 +837,7 @@ function Overview({
                       </b>
 
                       <span>
-                        {a.facility_code} Â·{" "}
+                        {a.facility_code} Ã‚Â·{" "}
                         {a.description ||
                           a.sensor_name ||
                           "Detected anomaly"}
@@ -980,7 +981,7 @@ function Facilities({
                         )
                       }
                     >
-                      Open â†’
+                      Open Ã¢â€ â€™
                     </button>
                   </td>
                 </tr>
@@ -1252,7 +1253,7 @@ function Resource({
                 key={facility.facility_code}
                 value={facility.facility_code}
               >
-                {facility.facility_name} Â·{" "}
+                {facility.facility_name} Ã‚Â·{" "}
                 {facility.facility_code}
               </option>
             ))}
@@ -1267,8 +1268,8 @@ function Resource({
           }`}
         >
           {connection === "live"
-            ? "â— Live"
-            : "â— Reconnecting"}
+            ? "Ã¢â€”Â Live"
+            : "Ã¢â€”Â Reconnecting"}
         </span>
       </div>
 
@@ -1383,7 +1384,7 @@ function Resource({
               {selectedFacility
                 ? selectedFacility.facility_name
                 : "All facilities"}{" "}
-              Â· live WebSocket history
+              Ã‚Â· live WebSocket history
             </p>
           </div>
 
@@ -1710,7 +1711,7 @@ function Alerts({ anomalies }) {
                       ? new Date(
                           a.detected_at
                         ).toLocaleString()
-                      : "â€”"}
+                      : "Ã¢â‚¬â€"}
                   </td>
 
                   <td>
@@ -1723,7 +1724,7 @@ function Alerts({ anomalies }) {
                         )
                       }
                     >
-                      Investigate â†’
+                      Investigate Ã¢â€ â€™
                     </button>
                   </td>
                 </tr>
@@ -1824,7 +1825,7 @@ function Detail({
   return (
     <Page
       title={facility.facility_name}
-      sub={`${facility.facility_code} Â· ${facility.city}, ${facility.state}`}
+      sub={`${facility.facility_code} Ã‚Â· ${facility.city}, ${facility.state}`}
     >
       <div className="detail-grid">
         <Kpi
@@ -3289,7 +3290,7 @@ function Reports() {
                 }
               >
                 <option value="all">
-                  All Facilities · {facilityList.length}
+                  All Facilities Â· {facilityList.length}
                 </option>
 
                 {facilityList.map((item) => (
@@ -3343,7 +3344,7 @@ function Reports() {
                 <div className="reports-facility-meta">
                   {selected.facility_code}
                   {selected.city
-                    ? ` • ${selected.city}`
+                    ? ` â€¢ ${selected.city}`
                     : ""}
                   {selected.state
                     ? `, ${selected.state}`
@@ -3575,7 +3576,7 @@ function Reports() {
                       realtimeData.temperature_c,
                       live.temperature_c,
                       1,
-                      " °C"
+                      " Â°C"
                     )}
                   />
                   <MetricItem
@@ -3713,7 +3714,7 @@ function Reports() {
                     Historical records are supplementary only.
                   </p>
                   <span className="reports-ai-model">
-                    Local model · llama3.2:3b
+                    Local model Â· llama3.2:3b
                   </span>
                 </div>
 
@@ -3855,8 +3856,8 @@ function Reports() {
                 <span className="live-dot active" />
                 <strong>Realtime stream active</strong>
                 <small>
-                  {statusCounts.Healthy} healthy ·{" "}
-                  {statusCounts.Attention} attention ·{" "}
+                  {statusCounts.Healthy} healthy Â·{" "}
+                  {statusCounts.Attention} attention Â·{" "}
                   {statusCounts.Critical} critical
                 </small>
               </div>
@@ -3980,7 +3981,7 @@ function Reports() {
                             <small>
                               {item.facility_code}
                               {item.city
-                                ? ` · ${item.city}`
+                                ? ` Â· ${item.city}`
                                 : ""}
                             </small>
                           </td>
@@ -4051,7 +4052,7 @@ function Reports() {
                                 )
                               }
                             >
-                              Open →
+                              Open â†’
                             </button>
                           </td>
                         </tr>
@@ -4580,12 +4581,12 @@ function Devices() {
   ];
 
   const formatDateTime = (value) => {
-    if (!value) return "—";
+    if (!value) return "â€”";
 
     const date = new Date(value);
 
     if (Number.isNaN(date.getTime())) {
-      return "—";
+      return "â€”";
     }
 
     return date.toLocaleString([], {
@@ -4598,12 +4599,12 @@ function Devices() {
   };
 
   const formatDate = (value) => {
-    if (!value) return "—";
+    if (!value) return "â€”";
 
     const date = new Date(value);
 
     if (Number.isNaN(date.getTime())) {
-      return "—";
+      return "â€”";
     }
 
     return date.toLocaleDateString([], {
@@ -4943,7 +4944,7 @@ function Devices() {
                               <strong>
                                 {
                                   device.facility_code ||
-                                  "—"
+                                  "â€”"
                                 }
                               </strong>
 
@@ -4961,7 +4962,7 @@ function Devices() {
                               <strong>
                                 {
                                   device.network_type ||
-                                  "—"
+                                  "â€”"
                                 }
                               </strong>
 
@@ -5162,7 +5163,7 @@ function Devices() {
                     <strong>
                       {
                         selectedDevice.device_model ||
-                        "—"
+                        "â€”"
                       }
                     </strong>
                   </div>
@@ -5172,7 +5173,7 @@ function Devices() {
                     <strong>
                       {
                         selectedDevice.firmware_version ||
-                        "—"
+                        "â€”"
                       }
                     </strong>
                   </div>
@@ -5182,7 +5183,7 @@ function Devices() {
                     <strong>
                       {
                         selectedDevice.communication_protocol ||
-                        "—"
+                        "â€”"
                       }
                     </strong>
                   </div>
@@ -5192,7 +5193,7 @@ function Devices() {
                     <strong>
                       {
                         selectedDevice.serial_number ||
-                        "—"
+                        "â€”"
                       }
                     </strong>
                   </div>
@@ -5211,7 +5212,7 @@ function Devices() {
                       {
                         detailHealth?.network_type ||
                         selectedDevice.network_type ||
-                        "—"
+                        "â€”"
                       }
                     </strong>
                   </div>
@@ -5222,7 +5223,7 @@ function Devices() {
                       {
                         detailHealth?.network_identifier ||
                         selectedDevice.network_identifier ||
-                        "—"
+                        "â€”"
                       }
                     </strong>
                   </div>
@@ -5233,7 +5234,7 @@ function Devices() {
                       {
                         detailHealth?.database_status ||
                         selectedDevice.status ||
-                        "—"
+                        "â€”"
                       }
                     </strong>
                   </div>
@@ -5243,7 +5244,7 @@ function Devices() {
                     <strong>
                       {
                         detailHealth?.status ||
-                        "—"
+                        "â€”"
                       }
                     </strong>
                   </div>
@@ -5298,7 +5299,7 @@ function Devices() {
                     <strong>
                       {
                         selectedDevice.decommission_reason ||
-                        "—"
+                        "â€”"
                       }
                     </strong>
                   </div>
@@ -5346,7 +5347,7 @@ function Devices() {
                         ? `${Number(
                             detailUptime.uptime_percent
                           ).toFixed(1)}%`
-                        : "—"}
+                        : "â€”"}
                     </strong>
                   </div>
 
@@ -5358,7 +5359,7 @@ function Devices() {
                           ? `${Number(
                               detailUptime.observed_uptime_percent
                             ).toFixed(1)}%`
-                          : "—"}
+                          : "â€”"}
                       </div>
 
                       <div>
@@ -5539,33 +5540,16 @@ function App() {
 
           <Route
             path="/settings"
-            element={
-              <Page
-                title="Settings"
-                sub="FlowSense platform configuration and preferences"
-              >
-                <Card className="workspace-card">
-                  <PanelHead
-                    icon={Settings}
-                    title="Settings"
-                    sub="FlowSense platform configuration and preferences"
-                  />
-
-                  <p className="workspace-copy">
-                    FlowSense settings and platform preferences.
-                  </p>
-                </Card>
-              </Page>
-            }
+            element={<SettingsPage />}
           />
         </Route>
       </Route>
-
     </Routes>
   );
 }
 
 export default App;
+
 
 
 
