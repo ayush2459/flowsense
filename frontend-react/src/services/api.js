@@ -2,96 +2,206 @@ const BASE =
   import.meta.env.VITE_API_BASE_URL ||
   "http://localhost:8000";
 
-const get = async (path, options = {}) => {
-  const controller = new AbortController();
 
-  const timeout = setTimeout(() => {
-    controller.abort();
-  }, options.timeout ?? 8000);
+// ============================================================
+// GET
+// ============================================================
 
-  try {
-    const response = await fetch(`${BASE}${path}`, {
-      method: "GET",
-      headers: {
-        Accept: "application/json"
-      },
-      signal: controller.signal,
-      cache: "no-store"
-    });
+const get = async (
+  path,
+  options = {}
+) => {
+  const controller =
+    new AbortController();
 
-    if (!response.ok) {
-      throw new Error(
-        `${response.status} ${response.statusText} ${path}`
-      );
-    }
-
-    return await response.json();
-  } finally {
-    clearTimeout(timeout);
-  }
-};
-
-const post = async (path, options = {}) => {
-  const controller = new AbortController();
-
-  const timeout = setTimeout(() => {
-    controller.abort();
-  }, options.timeout ?? 90000);
+  const timeout = setTimeout(
+    () => {
+      controller.abort();
+    },
+    options.timeout ?? 10000
+  );
 
   try {
-    const response = await fetch(`${BASE}${path}`, {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json"
-      },
-      signal: controller.signal,
-      cache: "no-store",
-      body: options.body
-        ? JSON.stringify(options.body)
-        : undefined
-    });
+    const response = await fetch(
+      `${BASE}${path}`,
+      {
+        method: "GET",
+
+        headers: {
+          Accept:
+            "application/json"
+        },
+
+        signal:
+          controller.signal,
+
+        cache:
+          "no-store"
+      }
+    );
 
     if (!response.ok) {
       let detail = "";
 
       try {
-        const data = await response.json();
+        const data =
+          await response.json();
 
         detail =
           data?.detail ||
           data?.error ||
           "";
       } catch {
-        // Ignore non-JSON error responses.
+        // Ignore non-JSON responses.
       }
 
       throw new Error(
         `${response.status} ${
           response.statusText
         } ${path}${
-          detail ? ` — ${detail}` : ""
+          detail
+            ? ` — ${detail}`
+            : ""
         }`
       );
     }
 
     return await response.json();
+
   } finally {
     clearTimeout(timeout);
   }
 };
 
-const encode = (value) =>
-  encodeURIComponent(String(value));
+
+// ============================================================
+// POST
+// ============================================================
+
+const post = async (
+  path,
+  options = {}
+) => {
+  const controller =
+    new AbortController();
+
+  /*
+   * Ollama can take longer because
+   * llama3.2:3b is running locally on CPU.
+   *
+   * Backend portfolio timeout:
+   * 120 seconds.
+   *
+   * Frontend timeout:
+   * 180 seconds.
+   */
+
+  const timeout = setTimeout(
+    () => {
+      controller.abort();
+    },
+    options.timeout ?? 180000
+  );
+
+  try {
+
+    const response =
+      await fetch(
+        `${BASE}${path}`,
+        {
+          method: "POST",
+
+          headers: {
+            Accept:
+              "application/json",
+
+            "Content-Type":
+              "application/json"
+          },
+
+          signal:
+            controller.signal,
+
+          cache:
+            "no-store",
+
+          body:
+            options.body
+              ? JSON.stringify(
+                  options.body
+                )
+              : undefined
+        }
+      );
+
+    if (!response.ok) {
+
+      let detail = "";
+
+      try {
+
+        const data =
+          await response.json();
+
+        detail =
+          data?.detail ||
+          data?.error ||
+          "";
+
+      } catch {
+        // Ignore non-JSON responses.
+      }
+
+      throw new Error(
+        `${response.status} ${
+          response.statusText
+        } ${path}${
+          detail
+            ? ` — ${detail}`
+            : ""
+        }`
+      );
+    }
+
+    return await response.json();
+
+  } finally {
+
+    clearTimeout(timeout);
+  }
+};
+
+
+// ============================================================
+// URL ENCODING
+// ============================================================
+
+const encode = (
+  value
+) =>
+  encodeURIComponent(
+    String(value)
+  );
+
+
+// ============================================================
+// FLOW SENSE API
+// ============================================================
 
 export const api = {
-  /*
-   * Portfolio
-   */
-  facilities: () =>
-    get("/api/facilities"),
 
-  anomalies: (limit = 50) =>
+  // ----------------------------------------------------------
+  // Portfolio
+  // ----------------------------------------------------------
+
+  facilities: () =>
+    get(
+      "/api/facilities"
+    ),
+
+  anomalies: (
+    limit = 50
+  ) =>
     get(
       `/api/anomalies/recent?limit=${Math.min(
         Number(limit) || 50,
@@ -99,17 +209,24 @@ export const api = {
       )}`
     ),
 
-  /*
-   * Facility
-   */
-  summary: (facilityCode) =>
+
+  // ----------------------------------------------------------
+  // Facility
+  // ----------------------------------------------------------
+
+  summary: (
+    facilityCode
+  ) =>
     get(
       `/api/facilities/${encode(
         facilityCode
       )}/summary`
     ),
 
-  energy: (facilityCode, hours = 24) =>
+  energy: (
+    facilityCode,
+    hours = 24
+  ) =>
     get(
       `/api/facilities/${encode(
         facilityCode
@@ -119,7 +236,10 @@ export const api = {
       )}`
     ),
 
-  water: (facilityCode, hours = 24) =>
+  water: (
+    facilityCode,
+    hours = 24
+  ) =>
     get(
       `/api/facilities/${encode(
         facilityCode
@@ -142,16 +262,20 @@ export const api = {
       )}`
     ),
 
-  yearlySummary: (facilityCode) =>
+  yearlySummary: (
+    facilityCode
+  ) =>
     get(
       `/api/facilities/${encode(
         facilityCode
       )}/yearly-summary`
     ),
 
-  /*
-   * Reports
-   */
+
+  // ----------------------------------------------------------
+  // Reports
+  // ----------------------------------------------------------
+
   facilityReport: (
     facilityCode,
     period = "24h"
@@ -159,7 +283,9 @@ export const api = {
     get(
       `/api/reports/facilities/${encode(
         facilityCode
-      )}?period=${encode(period)}`
+      )}?period=${encode(
+        period
+      )}`
     ),
 
   aiReportAnalysis: (
@@ -173,15 +299,48 @@ export const api = {
         period
       )}`,
       {
-        timeout: 180000
+        timeout:
+          180000
       }
     ),
 
-  aiPortfolioAnalysis: (period = "24h") =>
+  /*
+   * Backend:
+   *
+   * POST
+   * /api/reports/portfolio/ai-analysis?period=30d
+   *
+   * Response:
+   *
+   * {
+   *   scope: "portfolio",
+   *   period: "30d",
+   *   facility_count: 100,
+   *   success: true,
+   *   model: "llama3.2:3b",
+   *   evidence_summary: {...},
+   *   analysis: {...},
+   *   error: null
+   * }
+   */
+
+  aiPortfolioAnalysis: (
+    period = "24h"
+  ) =>
     post(
-      `/api/reports/portfolio/ai-analysis?period=${encode(period)}`,
-      { timeout: 180000 }
+      `/api/reports/portfolio/ai-analysis?period=${encode(
+        period
+      )}`,
+      {
+        timeout:
+          180000
+      }
     ),
+
+
+  // ----------------------------------------------------------
+  // PDF Reports
+  // ----------------------------------------------------------
 
   reportPdfUrl: (
     facilityCode,
@@ -189,7 +348,9 @@ export const api = {
   ) =>
     `${BASE}/api/reports/facilities/${encode(
       facilityCode
-    )}/pdf?period=${encode(period)}`,
+    )}/pdf?period=${encode(
+      period
+    )}`,
 
   reportPortfolioPdfUrl: (
     period = "24h"
@@ -198,10 +359,14 @@ export const api = {
       period
     )}`,
 
-  /*
-   * Portfolio historical data
-   */
-  portfolioEnergy: (hours = 24) =>
+
+  // ----------------------------------------------------------
+  // Portfolio Historical Data
+  // ----------------------------------------------------------
+
+  portfolioEnergy: (
+    hours = 24
+  ) =>
     get(
       `/api/portfolio/energy?hours=${Math.max(
         1,
@@ -209,7 +374,9 @@ export const api = {
       )}`
     ),
 
-  portfolioWater: (hours = 24) =>
+  portfolioWater: (
+    hours = 24
+  ) =>
     get(
       `/api/portfolio/water?hours=${Math.max(
         1,
@@ -217,27 +384,37 @@ export const api = {
       )}`
     ),
 
-  /*
-   * Devices / Asset Management
-   */
-  listDevices: () =>
-    get("/api/devices"),
 
-  deviceHealth: (deviceCode) =>
+  // ----------------------------------------------------------
+  // Devices / Asset Management
+  // ----------------------------------------------------------
+
+  listDevices: () =>
+    get(
+      "/api/devices"
+    ),
+
+  deviceHealth: (
+    deviceCode
+  ) =>
     get(
       `/api/devices/${encode(
         deviceCode
       )}/health`
     ),
 
-  deviceRealtimeHealth: (deviceCode) =>
+  deviceRealtimeHealth: (
+    deviceCode
+  ) =>
     get(
       `/api/devices/${encode(
         deviceCode
       )}/realtime-health`
     ),
 
-  deviceNetwork: (deviceCode) =>
+  deviceNetwork: (
+    deviceCode
+  ) =>
     get(
       `/api/devices/${encode(
         deviceCode
@@ -266,25 +443,41 @@ export const api = {
         deviceCode
       )}/offline-events?limit=${Math.min(
         100,
-        Math.max(1, Number(limit) || 50)
+        Math.max(
+          1,
+          Number(limit) || 50
+        )
       )}`
     )
 };
 
-/*
- * Backend information.
- */
-export const API_BASE_URL = BASE;
 
-/*
- * Lightweight health check.
- */
-export const health = async () => {
-  try {
-    return await get("/");
-  } catch {
-    return {
-      status: "offline"
-    };
-  }
-};
+// ============================================================
+// API BASE URL
+// ============================================================
+
+export const API_BASE_URL =
+  BASE;
+
+
+// ============================================================
+// LIGHTWEIGHT HEALTH CHECK
+// ============================================================
+
+export const health =
+  async () => {
+
+    try {
+
+      return await get(
+        "/"
+      );
+
+    } catch {
+
+      return {
+        status:
+          "offline"
+      };
+    }
+  };

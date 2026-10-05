@@ -1,30 +1,50 @@
 import json
+import requests
 from typing import Any, Dict
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
 
+# ============================================================
+# OLLAMA CONFIGURATION
+# ============================================================
+
 OLLAMA_URL = "http://localhost:11434/api/chat"
 OLLAMA_MODEL = "llama3.2:3b"
 
+
+# ============================================================
+# HELPERS
+# ============================================================
 
 def _safe_number(value: Any):
     try:
         if value is None:
             return None
+
         return float(value)
+
     except (TypeError, ValueError):
         return None
-def _build_ai_evidence(report: Dict[str, Any]) -> Dict[str, Any]:
+
+
+# ============================================================
+# FACILITY AI EVIDENCE
+# ============================================================
+
+def _build_ai_evidence(
+    report: Dict[str, Any],
+) -> Dict[str, Any]:
+
     """
-    Build a compact evidence package for Ollama.
+    Build a compact evidence package for facility-level Ollama analysis.
 
     FlowSense backend calculations remain authoritative.
-    The LLM only interprets supplied metrics.
+    Ollama only interprets supplied evidence.
     """
 
     facility = report.get("facility") or {}
-    snapshot = report.get("current_snapshot") or {}
+
     realtime = report.get("realtime") or {}
     realtime_data = realtime.get("data") or {}
     detection = realtime.get("detection") or {}
@@ -53,7 +73,7 @@ def _build_ai_evidence(report: Dict[str, Any]) -> Dict[str, Any]:
     )
 
     # --------------------------------------------------------
-    # Latest historical readings
+    # Historical readings
     # --------------------------------------------------------
 
     energy_readings = energy.get(
@@ -79,7 +99,7 @@ def _build_ai_evidence(report: Dict[str, Any]) -> Dict[str, Any]:
     )
 
     # --------------------------------------------------------
-    # Realtime detection
+    # Detection
     # --------------------------------------------------------
 
     primary_anomaly = detection.get(
@@ -92,10 +112,11 @@ def _build_ai_evidence(report: Dict[str, Any]) -> Dict[str, Any]:
     )
 
     # --------------------------------------------------------
-    # Compact evidence
+    # Compact facility evidence
     # --------------------------------------------------------
 
     return {
+
         "facility": {
             "facility_code":
                 facility.get("facility_code"),
@@ -125,6 +146,7 @@ def _build_ai_evidence(report: Dict[str, Any]) -> Dict[str, Any]:
             ),
 
         "realtime": {
+
             "available":
                 bool(realtime),
 
@@ -203,6 +225,7 @@ def _build_ai_evidence(report: Dict[str, Any]) -> Dict[str, Any]:
         },
 
         "historical_data": {
+
             "energy_reading_count":
                 len(energy_readings),
 
@@ -210,13 +233,18 @@ def _build_ai_evidence(report: Dict[str, Any]) -> Dict[str, Any]:
                 len(water_readings),
 
             "latest_energy":
-                None if realtime else latest_energy,
+                None
+                if realtime
+                else latest_energy,
 
             "latest_water":
-                None if realtime else latest_water,
+                None
+                if realtime
+                else latest_water,
         },
 
         "efficiency": {
+
             "energy_score":
                 _safe_number(
                     efficiency.get(
@@ -233,6 +261,7 @@ def _build_ai_evidence(report: Dict[str, Any]) -> Dict[str, Any]:
         },
 
         "detection": {
+
             "facility_status":
                 detection.get(
                     "facility_status"
@@ -260,10 +289,10 @@ def _build_ai_evidence(report: Dict[str, Any]) -> Dict[str, Any]:
 
             "primary_anomaly":
                 primary_anomaly,
-
         },
 
         "persisted_data": {
+
             "reconciliation_count":
                 len(reconciliation),
 
@@ -279,12 +308,18 @@ def _build_ai_evidence(report: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+# ============================================================
+# FACILITY-LEVEL AI ANALYSIS
+# ============================================================
+
 def generate_report_analysis(
     report: Dict[str, Any],
 ) -> Dict[str, Any]:
+
     """
-    Generate a concise evidence-based FlowSense
-    report analysis using local Ollama.
+    Generate facility-level FlowSense AI analysis.
+
+    Backend calculations remain authoritative.
     """
 
     evidence = _build_ai_evidence(
@@ -294,13 +329,34 @@ def generate_report_analysis(
     system_prompt = """
 You are the FlowSense Energy & Water Intelligence assistant.
 
-Analyze ONLY the FlowSense evidence supplied by the application.
+Analyze ONLY the evidence supplied by FlowSense.
 
-IMPORTANT RULES:\n\n1. Never invent measurements, anomalies, alerts, causes, savings, or events.\n\n2. FlowSense backend calculations are authoritative.\n\n3. REALTIME DATA IS AUTHORITATIVE FOR THE CURRENT REPORT. If realtime.available is true, ALL CURRENT ENERGY, WATER, POWER, SENSOR, EFFICIENCY, AND ANOMALY CONCLUSIONS MUST COME FROM the realtime section. Do NOT use historical_data.latest_energy or historical_data.latest_water for current values.\n\n4. If detection.anomaly_count is greater than 0 OR detection.primary_anomaly contains a detected anomaly, explicitly report the anomaly. Do NOT say no anomalies were detected.\n\n5. When a primary realtime anomaly exists, report the supplied anomaly type, severity, confidence, likely source, area, detection method, evidence, and estimated loss when those fields are available.\n\n6. If realtime data is available, do not describe the facility as healthy when the realtime detection facility_status indicates attention, warning, critical, or another non-healthy state.\n\n7. Treat realtime telemetry separately from historical data. Historical data must never override realtime telemetry or realtime detection. When realtime.available is true, historical_data may only be used for historical context and reading counts, never as the current measurement.\n\n8. If historical data is unavailable or limited, state that briefly, but do not let that obscure realtime findings.\n\n9. Do not recalculate authoritative metrics.
-When actual usage is above expected usage, do not describe it as "within expected range"; explicitly state that it is above expected and include the supplied percentage or variance when available.
-Do not call a value normal, within range, or healthy when the supplied evidence explicitly shows it is above the configured expected value.\n\n10. Recommendations must be practical and directly supported by the supplied realtime detection evidence.\n\n11. Keep the response concise and professional.\n\n12. Do not mention that you are an AI language model.
+Rules:
 
-Return ONLY valid JSON with exactly these fields:
+1. Never invent measurements, anomalies, alerts, causes,
+   savings, or events.
+
+2. FlowSense backend calculations are authoritative.
+
+3. If realtime.available is true, realtime data is authoritative
+   for current values.
+
+4. Historical data must not override realtime data.
+
+5. If an anomaly is supplied, explicitly report it.
+
+6. If actual usage is above expected usage, explicitly state
+   that it is above expected.
+
+7. Do not recalculate authoritative metrics.
+
+8. Recommendations must be supported by supplied evidence.
+
+9. Keep the response concise and professional.
+
+10. Do not mention that you are an AI model.
+
+Return ONLY valid JSON:
 
 {
   "summary": "short executive summary",
@@ -349,9 +405,8 @@ Return ONLY valid JSON with exactly these fields:
 
         "options": {
             "temperature": 0.2,
-
-            # Keep generation short and fast.
-            "num_predict": 350,
+            "num_predict": 300,
+            "num_ctx": 4096,
         },
     }
 
@@ -393,26 +448,38 @@ Return ONLY valid JSON with exactly these fields:
             )
         )
 
+        if not content:
+            raise ValueError(
+                "Ollama returned empty content"
+            )
+
         analysis = json.loads(
             content
         )
 
         return {
-            "success":
-                True,
+            "success": True,
 
             "model":
                 OLLAMA_MODEL,
 
             "analysis":
                 analysis,
+
+            "error":
+                None,
         }
 
     except HTTPError as exc:
 
         return {
-            "success":
-                False,
+            "success": False,
+
+            "model":
+                OLLAMA_MODEL,
+
+            "analysis":
+                {},
 
             "error":
                 f"Ollama HTTP error: {exc.code}",
@@ -421,8 +488,13 @@ Return ONLY valid JSON with exactly these fields:
     except URLError as exc:
 
         return {
-            "success":
-                False,
+            "success": False,
+
+            "model":
+                OLLAMA_MODEL,
+
+            "analysis":
+                {},
 
             "error":
                 f"Ollama connection failed: {exc.reason}",
@@ -431,8 +503,13 @@ Return ONLY valid JSON with exactly these fields:
     except json.JSONDecodeError:
 
         return {
-            "success":
-                False,
+            "success": False,
+
+            "model":
+                OLLAMA_MODEL,
+
+            "analysis":
+                {},
 
             "error":
                 "Ollama returned invalid JSON",
@@ -441,8 +518,13 @@ Return ONLY valid JSON with exactly these fields:
     except Exception as exc:
 
         return {
-            "success":
-                False,
+            "success": False,
+
+            "model":
+                OLLAMA_MODEL,
+
+            "analysis":
+                {},
 
             "error":
                 f"Ollama analysis failed: {exc}",
@@ -452,31 +534,439 @@ Return ONLY valid JSON with exactly these fields:
 # ============================================================
 # PORTFOLIO / ALL-FACILITIES AI ANALYSIS
 # ============================================================
-def generate_portfolio_report_analysis(evidence):
-    import json
-    from urllib.request import Request, urlopen
-    system_prompt = """
-You are the FlowSense portfolio intelligence engine.
-Use ONLY supplied backend evidence. Never invent measurements, anomalies, causes, savings, events, or conditions.
-Backend calculations are authoritative. Positive variance from expected/target is ABOVE EXPECTED; negative variance is BELOW EXPECTED.
-Do not call KPI deviation an anomaly unless detection evidence says it is an anomaly.
-Identify facility codes when naming facilities. If evidence is missing, say unavailable.
-Return ONLY JSON with keys: summary, key_findings, energy_analysis, water_analysis, facilities_requiring_attention, recommendations, priority_actions.
+# ============================================================
+# PORTFOLIO / ALL-FACILITIES AI ANALYSIS
+# ============================================================
+
+def generate_portfolio_report_analysis(
+    evidence: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Generate portfolio-level FlowSense AI interpretation.
+
+    IMPORTANT:
+    - Portfolio metrics are calculated by the FlowSense backend.
+    - Ollama is used only for concise qualitative interpretation
+      and recommendations.
+    - Exact numeric statements returned to the frontend are built
+      from backend-authoritative values, preventing the model from
+      hallucinating values such as 0 kWh or 0 kL.
+    """
+
+    portfolio_totals = (
+        evidence.get("portfolio_totals") or {}
+    )
+
+    portfolio_variance = (
+        evidence.get("portfolio_variance") or {}
+    )
+
+    energy_kwh = float(
+        portfolio_totals.get("energy_kwh") or 0
+    )
+
+    expected_energy_kwh = float(
+        portfolio_totals.get("expected_energy_kwh") or 0
+    )
+
+    water_kl = float(
+        portfolio_totals.get("water_kl") or 0
+    )
+
+    expected_water_kl = float(
+        portfolio_totals.get("expected_water_kl") or 0
+    )
+
+    anomaly_count = int(
+        portfolio_totals.get("anomaly_count") or 0
+    )
+
+    critical_facilities = int(
+        portfolio_totals.get("critical_facilities") or 0
+    )
+
+    attention_facilities = int(
+        portfolio_totals.get("attention_facilities") or 0
+    )
+
+    energy_variance_percent = (
+        portfolio_variance.get("energy_variance_percent")
+    )
+
+    water_variance_percent = (
+        portfolio_variance.get("water_variance_percent")
+    )
+
+    # --------------------------------------------------------
+    # Backend-authoritative status calculations
+    # --------------------------------------------------------
+
+    if energy_kwh > expected_energy_kwh:
+        energy_status = "above"
+    elif energy_kwh < expected_energy_kwh:
+        energy_status = "below"
+    else:
+        energy_status = "at"
+
+    if water_kl > expected_water_kl:
+        water_status = "above"
+    elif water_kl < expected_water_kl:
+        water_status = "below"
+    else:
+        water_status = "at"
+
+    # --------------------------------------------------------
+    # Exact backend-derived statements.
+    # These are NOT generated by Ollama.
+    # --------------------------------------------------------
+
+    if energy_status == "above":
+        energy_analysis = (
+            f"Energy consumption is above the expected portfolio "
+            f"level: {energy_kwh:.3f} kWh actual versus "
+            f"{expected_energy_kwh:.3f} kWh expected "
+            f"({energy_variance_percent}% variance)."
+        )
+    elif energy_status == "below":
+        energy_analysis = (
+            f"Energy consumption is below the expected portfolio "
+            f"level: {energy_kwh:.3f} kWh actual versus "
+            f"{expected_energy_kwh:.3f} kWh expected "
+            f"({energy_variance_percent}% variance)."
+        )
+    else:
+        energy_analysis = (
+            f"Energy consumption is at the expected portfolio "
+            f"level: {energy_kwh:.3f} kWh."
+        )
+
+    if water_status == "above":
+        water_analysis = (
+            f"Water consumption is above the expected portfolio "
+            f"level: {water_kl:.3f} kL actual versus "
+            f"{expected_water_kl:.3f} kL expected "
+            f"({water_variance_percent}% variance)."
+        )
+    elif water_status == "below":
+        water_analysis = (
+            f"Water consumption is below the expected portfolio "
+            f"level: {water_kl:.3f} kL actual versus "
+            f"{expected_water_kl:.3f} kL expected "
+            f"({water_variance_percent}% variance)."
+        )
+    else:
+        water_analysis = (
+            f"Water consumption is at the expected portfolio "
+            f"level: {water_kl:.3f} kL."
+        )
+
+    # --------------------------------------------------------
+    # Compact CPU-friendly Ollama prompt.
+    #
+    # IMPORTANT:
+    # Do NOT ask Ollama to reproduce numeric metrics.
+    # This avoids CPU-model hallucinations such as 0 kWh.
+    # --------------------------------------------------------
+
+    prompt = f"""
+You are the FlowSense portfolio monitoring assistant.
+
+The FlowSense backend has already calculated the authoritative
+portfolio metrics.
+
+Energy status: {energy_status}
+Water status: {water_status}
+
+Detected anomalies: {anomaly_count}
+Critical facilities: {critical_facilities}
+Facilities requiring attention: {attention_facilities}
+
+Energy variance: {energy_variance_percent}%
+Water variance: {water_variance_percent}%
+
+Generate ONLY qualitative interpretation and practical
+evidence-based recommendations.
+
+Do NOT output any numbers.
+Do NOT mention kWh.
+Do NOT mention kL.
+Do NOT invent facilities.
+Do NOT invent anomalies.
+Do NOT recalculate metrics.
+
+Return ONLY valid JSON:
+
+{{
+  "summary": "two short factual sentences",
+  "key_findings": [
+    "one short factual finding",
+    "one short factual finding"
+  ],
+  "recommendations": [
+    "one practical evidence-based recommendation",
+    "one practical evidence-based recommendation"
+  ],
+  "priority_actions": [
+    "one concise priority action"
+  ]
+}}
 """
-    payload={
-      'model':OLLAMA_MODEL,
-      'messages':[{'role':'system','content':system_prompt},{'role':'user','content':'FlowSense portfolio evidence:\n'+json.dumps(evidence,default=str,separators=(',',':'))}],
-      'stream':False,'format':'json','keep_alive':'10m',
-      'options':{'temperature':0.1,'num_predict':240}
+
+    payload = {
+        "model": OLLAMA_MODEL,
+
+        "messages": [
+            {
+                "role": "system",
+                "content": "Return only valid JSON.",
+            },
+            {
+                "role": "user",
+                "content": prompt,
+            },
+        ],
+
+        "stream": False,
+
+        "format": "json",
+
+        "options": {
+            "temperature": 0.1,
+            "num_predict": 100,
+            "num_ctx": 2048,
+        },
     }
+
+    ai_analysis = {}
+
     try:
-        req=Request(OLLAMA_URL,data=json.dumps(payload).encode('utf-8'),headers={'Content-Type':'application/json'},method='POST')
-        with urlopen(req,timeout=180) as response: raw=response.read().decode('utf-8')
-        result=json.loads(raw); content=result.get('message',{}).get('content')
-        if not content: raise RuntimeError('Ollama returned empty portfolio analysis')
-        analysis=json.loads(content)
-        for k in ('summary','energy_analysis','water_analysis'): analysis.setdefault(k,'')
-        for k in ('key_findings','facilities_requiring_attention','recommendations','priority_actions'): analysis.setdefault(k,[])
-        return {'success':True,'model':OLLAMA_MODEL,'analysis':analysis,'error':None}
+        response = requests.post(
+            OLLAMA_URL,
+            json=payload,
+            timeout=120,
+        )
+
+        response.raise_for_status()
+
+        data = response.json()
+
+        content = (
+            data.get(
+                "message",
+                {},
+            ).get(
+                "content",
+                "",
+            )
+        )
+
+        if not content:
+            raise ValueError(
+                "Ollama returned empty portfolio content"
+            )
+
+        print(
+            "[Portfolio AI] Raw Ollama response:"
+        )
+        print(content)
+
+        parsed = json.loads(content)
+
+        if isinstance(parsed, dict):
+            ai_analysis = parsed
+
+    except requests.Timeout:
+        print(
+            "[Portfolio AI] Ollama timed out; "
+            "using backend-authoritative fallback."
+        )
+
+    except requests.RequestException as exc:
+        print(
+            f"[Portfolio AI] Ollama request failed: {exc}; "
+            "using backend-authoritative fallback."
+        )
+
+    except json.JSONDecodeError:
+        print(
+            "[Portfolio AI] Ollama returned invalid JSON; "
+            "using backend-authoritative fallback."
+        )
+
     except Exception as exc:
-        return {'success':False,'model':OLLAMA_MODEL,'analysis':None,'error':str(exc)}
+        print(
+            f"[Portfolio AI] Unexpected Ollama error: {exc}; "
+            "using backend-authoritative fallback."
+        )
+
+    # --------------------------------------------------------
+    # Normalize AI qualitative fields.
+    # --------------------------------------------------------
+
+    key_findings = (
+        ai_analysis.get("key_findings")
+        if isinstance(
+            ai_analysis.get("key_findings"),
+            list,
+        )
+        else []
+    )
+
+    recommendations = (
+        ai_analysis.get("recommendations")
+        if isinstance(
+            ai_analysis.get("recommendations"),
+            list,
+        )
+        else []
+    )
+
+    priority_actions = (
+        ai_analysis.get("priority_actions")
+        if isinstance(
+            ai_analysis.get("priority_actions"),
+            list,
+        )
+        else []
+    )
+
+    # --------------------------------------------------------
+    # Deterministic findings ensure the dashboard never loses
+    # important backend evidence even if Ollama is weak/slow.
+    # --------------------------------------------------------
+
+    deterministic_findings = []
+
+    if energy_status == "above":
+        deterministic_findings.append(
+            "Portfolio energy consumption is above the configured expected level."
+        )
+    elif energy_status == "below":
+        deterministic_findings.append(
+            "Portfolio energy consumption is below the configured expected level."
+        )
+    else:
+        deterministic_findings.append(
+            "Portfolio energy consumption is at the configured expected level."
+        )
+
+    if water_status == "above":
+        deterministic_findings.append(
+            "Portfolio water consumption is above the configured expected level."
+        )
+    elif water_status == "below":
+        deterministic_findings.append(
+            "Portfolio water consumption is below the configured expected level."
+        )
+    else:
+        deterministic_findings.append(
+            "Portfolio water consumption is at the configured expected level."
+        )
+
+    if anomaly_count > 0:
+        deterministic_findings.append(
+            f"{anomaly_count} anomalies are present in the backend evidence."
+        )
+
+    # Keep AI findings only when they are non-empty.
+    final_findings = deterministic_findings[:2]
+
+    for finding in key_findings:
+        if isinstance(finding, str) and finding.strip():
+            if finding not in final_findings:
+                final_findings.append(finding.strip())
+
+    final_findings = final_findings[:3]
+
+    # --------------------------------------------------------
+    # Deterministic executive summary.
+    # --------------------------------------------------------
+
+    if energy_status == "above" and water_status == "above":
+        summary = (
+            "Portfolio energy and water consumption are both above "
+            "their configured expected levels. "
+        )
+    elif energy_status == "above":
+        summary = (
+            "Portfolio energy consumption is above its configured "
+            "expected level. "
+        )
+    elif water_status == "above":
+        summary = (
+            "Portfolio water consumption is above its configured "
+            "expected level. "
+        )
+    else:
+        summary = (
+            "Portfolio consumption is not above both configured "
+            "expected levels. "
+        )
+
+    summary += (
+        f"The backend reports {anomaly_count} anomalies, "
+        f"{critical_facilities} critical facilities, and "
+        f"{attention_facilities} facilities requiring attention."
+    )
+
+    # --------------------------------------------------------
+    # Safe fallback recommendations if Ollama returns none.
+    # --------------------------------------------------------
+
+    if not recommendations:
+        recommendations = [
+            "Review facilities contributing the largest deviations from expected usage.",
+            "Investigate critical and anomaly-affected facilities using the available device and sensor evidence.",
+        ]
+
+    if not priority_actions:
+        if critical_facilities > 0:
+            priority_actions = [
+                "Review the critical facilities and associated anomalies first."
+            ]
+        elif anomaly_count > 0:
+            priority_actions = [
+                "Review the detected anomalies and their affected facilities."
+            ]
+        else:
+            priority_actions = [
+                "Continue monitoring portfolio energy and water performance."
+            ]
+
+    # --------------------------------------------------------
+    # Final normalized response.
+    #
+    # Numeric energy/water analysis comes ONLY from backend.
+    # Ollama supplies qualitative findings/recommendations.
+    # --------------------------------------------------------
+
+    normalized = {
+        "summary": summary,
+
+        "key_findings": final_findings,
+
+        "energy_analysis": energy_analysis,
+
+        "water_analysis": water_analysis,
+
+        "facilities_requiring_attention": [],
+
+        "recommendations": [
+            str(x)
+            for x in recommendations[:3]
+            if isinstance(x, str) and x.strip()
+        ],
+
+        "priority_actions": [
+            str(x)
+            for x in priority_actions[:3]
+            if isinstance(x, str) and x.strip()
+        ],
+    }
+
+    return {
+        "success": True,
+        "model": OLLAMA_MODEL,
+        "analysis": normalized,
+        "error": None,
+    }

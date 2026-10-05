@@ -1,4 +1,4 @@
-﻿"""
+"""
 FlowSense API - REST + realtime WebSocket backend.
 
 Stage 3:
@@ -14,6 +14,8 @@ Stage 3:
 """
 
 import asyncio
+import os
+import json
 from ollama_service import generate_report_analysis, generate_portfolio_report_analysis
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -2470,43 +2472,497 @@ def generate_portfolio_report_pdf(
 
 
 # ============================================================
+# ============================================================
+# PORTFOLIO AI RESULT VALIDATION
+# ============================================================
+
+def normalize_portfolio_ai_result(result: Any) -> dict:
+    """Normalize and sanitize the local Ollama portfolio response."""
+
+    if not isinstance(result, dict):
+        return {
+            "success": False,
+            "model": None,
+            "analysis": {},
+            "error": "Invalid Ollama portfolio response",
+        }
+
+    analysis = result.get("analysis")
+    if not isinstance(analysis, dict):
+        analysis = {}
+
+    allowed = {
+        "summary",
+        "key_findings",
+        "energy_analysis",
+        "water_analysis",
+        "facilities_requiring_attention",
+        "recommendations",
+        "priority_actions",
+    }
+
+    cleaned = {
+        key: value
+        for key, value in analysis.items()
+        if key in allowed
+    }
+
+    return {
+        "success": bool(result.get("success", False)),
+        "model": result.get("model"),
+        "analysis": cleaned,
+        "error": result.get("error"),
+    }
+
+
 # PORTFOLIO / ALL-FACILITIES AI ANALYSIS
 # ============================================================
 @app.post("/api/reports/portfolio/ai-analysis")
-def portfolio_report_ai_analysis(period: str="24h", db: Session=Depends(get_db)):
+def portfolio_report_ai_analysis(period: str = "24h", db: Session = Depends(get_db)):
     from report_engine import build_portfolio_report_data, resolve_period
+
     try:
-        start,end=resolve_period(period)
-        report=build_portfolio_report_data(db,start,end)
-        rows=[]
-        totals={'energy_kwh':0.0,'expected_energy_kwh':0.0,'water_kl':0.0,'expected_water_kl':0.0,'anomaly_count':0,'critical_facilities':0,'attention_facilities':0}
-        def num(v):
-            try:return float(v)
-            except:return None
-        for item in report.get('facilities',[]):
-            f=item.get('facility') or {}; rt=item.get('realtime') or {}; data=rt.get('data') or {}; det=rt.get('detection') or {}
-            code=f.get('facility_code') or item.get('facility_code'); name=f.get('facility_name') or code
-            energy=num(f.get('energy_kwh')); energy=energy if energy is not None else num(data.get('energy_kwh'))
-            water=num(f.get('water_kl')); water=water if water is not None else num(data.get('water_kl'))
-            ee=num(f.get('expected_energy_kwh')); ee=ee if ee is not None else num(data.get('expected_energy_kwh'))
-            ew=num(f.get('expected_water_kl')); ew=ew if ew is not None else num(data.get('expected_water_kl'))
-            ev=((energy-ee)/ee*100) if energy is not None and ee else None; wv=((water-ew)/ew*100) if water is not None and ew else None
-            ac=int(det.get('anomaly_count') or 0); status=det.get('facility_status') or f.get('facility_status') or 'unknown'
-            for key,val in [('energy_kwh',energy),('expected_energy_kwh',ee),('water_kl',water),('expected_water_kl',ew)]:
-                if val is not None: totals[key]+=val
-            totals['anomaly_count']+=ac
-            sl=str(status).lower()
-            if sl=='critical': totals['critical_facilities']+=1
-            elif sl in {'attention','warning'}: totals['attention_facilities']+=1
-            rows.append({'facility_code':code,'facility_name':name,'status':status,'energy_kwh':energy,'expected_energy_kwh':ee,'energy_variance_percent':round(ev,2) if ev is not None else None,'water_kl':water,'expected_water_kl':ew,'water_variance_percent':round(wv,2) if wv is not None else None,'anomaly_count':ac,'primary_anomaly':det.get('primary_anomaly')})
-        totals={k:round(v,3) if isinstance(v,float) else v for k,v in totals.items()}
-        evidence={'report_metadata':{'period':period,'start':start.isoformat(),'end':end.isoformat(),'facility_count':len(rows),'generated_at':datetime.now(timezone.utc).isoformat()},'portfolio_totals':totals,'facilities':rows}
-        result=generate_portfolio_report_analysis(evidence)
-        return {'scope':'portfolio','period':period,'facility_count':len(rows),'success':result.get('success',False),'model':result.get('model'),'evidence_summary':totals,'analysis':result.get('analysis'),'error':result.get('error')}
-    except ValueError as exc: raise HTTPException(status_code=400,detail=str(exc))
+        start, end = resolve_period(period)
+        report = build_portfolio_report_data(db, start, end)
+
+        rows = []
+
+        totals = {
+            "energy_kwh": 0.0,
+            "expected_energy_kwh": 0.0,
+            "water_kl": 0.0,
+            "expected_water_kl": 0.0,
+            "anomaly_count": 0,
+            "critical_facilities": 0,
+            "attention_facilities": 0,
+        }
+
+        def num(value):
+            try:
+                if value is None:
+                    return None
+                return float(value)
+            except (TypeError, ValueError):
+                return None
+
+        def latest_reading(readings):
+            if not readings:
+                return None
+
+            valid = [
+                r for r in readings
+                if isinstance(r, dict) and r.get("reading_value") is not None
+            ]
+
+            if not valid:
+                return None
+
+            valid.sort(
+                key=lambda r: str(r.get("reading_time") or ""),
+                reverse=True,
+            )
+
+            return num(valid[0].get("reading_value"))
+
+        def expected_from_baseline(baselines, readings):
+            """
+            Match the expected baseline to the latest available
+            reading using hour_of_day and day_of_week.
+            """
+            if not baselines or not readings:
+                return None
+
+            valid_readings = [
+                r for r in readings
+                if isinstance(r, dict)
+                and r.get("reading_value") is not None
+                and r.get("reading_time")
+            ]
+
+            if not valid_readings:
+                return None
+
+            valid_readings.sort(
+                key=lambda r: str(r.get("reading_time") or ""),
+                reverse=True,
+            )
+
+            latest = valid_readings[0]
+
+            reading_time = latest.get("reading_time")
+
+            try:
+                from datetime import datetime
+
+                if isinstance(reading_time, str):
+                    reading_dt = datetime.fromisoformat(
+                        reading_time.replace("Z", "+00:00")
+                    )
+                else:
+                    reading_dt = reading_time
+
+                hour = reading_dt.hour
+                day = reading_dt.weekday()
+
+            except Exception:
+                return None
+
+            candidates = [
+                b for b in baselines
+                if isinstance(b, dict)
+                and b.get("hour_of_day") == hour
+                and b.get("day_of_week") == day
+                and b.get("expected_value") is not None
+            ]
+
+            if not candidates:
+                return None
+
+            return num(candidates[0].get("expected_value"))
+
+        for item in report.get("facilities", []):
+            facility = item.get("facility") or {}
+
+            code = facility.get("facility_code")
+            name = facility.get("facility_name") or code
+
+            energy_block = item.get("energy") or {}
+            water_block = item.get("water") or {}
+
+            energy_readings = energy_block.get("readings") or []
+            energy_baselines = energy_block.get("baselines") or []
+
+            water_readings = water_block.get("readings") or []
+            water_baselines = water_block.get("baselines") or []
+
+            anomalies = item.get("anomalies") or []
+            alerts = item.get("alerts") or []
+
+            # -------------------------------------------------
+            # Actual readings
+            # -------------------------------------------------
+            energy = latest_reading(energy_readings)
+            water = latest_reading(water_readings)
+
+            # -------------------------------------------------
+            # Expected values from matching baseline
+            # -------------------------------------------------
+            expected_energy = expected_from_baseline(
+                energy_baselines,
+                energy_readings,
+            )
+
+            expected_water = expected_from_baseline(
+                water_baselines,
+                water_readings,
+            )
+
+            # -------------------------------------------------
+            # Variance
+            # -------------------------------------------------
+            energy_variance = None
+
+            if energy is not None and expected_energy not in (None, 0):
+                energy_variance = (
+                    (energy - expected_energy)
+                    / expected_energy
+                ) * 100
+
+            water_variance = None
+
+            if water is not None and expected_water not in (None, 0):
+                water_variance = (
+                    (water - expected_water)
+                    / expected_water
+                ) * 100
+
+            # -------------------------------------------------
+            # Facility status
+            # -------------------------------------------------
+            status = "normal"
+
+            if len(anomalies) > 0:
+                status = "attention"
+
+            if any(
+                str(a.get("severity") or "").lower() == "critical"
+                for a in anomalies
+                if isinstance(a, dict)
+            ):
+                status = "critical"
+
+            if any(
+                str(a.get("severity") or "").lower() == "critical"
+                for a in alerts
+                if isinstance(a, dict)
+            ):
+                status = "critical"
+
+            anomaly_count = len(anomalies)
+
+            # -------------------------------------------------
+            # Portfolio totals
+            # -------------------------------------------------
+            if energy is not None:
+                totals["energy_kwh"] += energy
+
+            if expected_energy is not None:
+                totals["expected_energy_kwh"] += expected_energy
+
+            if water is not None:
+                totals["water_kl"] += water
+
+            if expected_water is not None:
+                totals["expected_water_kl"] += expected_water
+
+            totals["anomaly_count"] += anomaly_count
+
+            if status == "critical":
+                totals["critical_facilities"] += 1
+            elif status == "attention":
+                totals["attention_facilities"] += 1
+
+            # -------------------------------------------------
+            # Primary anomaly
+            # -------------------------------------------------
+            primary_anomaly = None
+
+            if anomalies:
+                first_anomaly = anomalies[0]
+
+                if isinstance(first_anomaly, dict):
+                    primary_anomaly = (
+                        first_anomaly.get("description")
+                        or first_anomaly.get("anomaly_type")
+                        or first_anomaly.get("message")
+                        or str(first_anomaly)
+                    )
+                else:
+                    primary_anomaly = str(first_anomaly)
+
+            rows.append(
+                {
+                    "facility_code": code,
+                    "facility_name": name,
+                    "status": status,
+                    "energy_kwh": energy,
+                    "expected_energy_kwh": expected_energy,
+                    "energy_variance_percent": (
+                        round(energy_variance, 2)
+                        if energy_variance is not None
+                        else None
+                    ),
+                    "water_kl": water,
+                    "expected_water_kl": expected_water,
+                    "water_variance_percent": (
+                        round(water_variance, 2)
+                        if water_variance is not None
+                        else None
+                    ),
+                    "anomaly_count": anomaly_count,
+                    "primary_anomaly": primary_anomaly,
+                }
+            )
+
+        # -----------------------------------------------------
+        # Round totals
+        # -----------------------------------------------------
+        totals = {
+            key: round(value, 3)
+            if isinstance(value, float)
+            else value
+            for key, value in totals.items()
+        }
+
+        ranked_facilities = sorted(
+            rows,
+            key=lambda r: (
+                abs(r.get("energy_variance_percent") or 0)
+                + abs(r.get("water_variance_percent") or 0)
+            ),
+            reverse=True,
+        )
+
+        # Facilities that require attention.
+        attention_rows = [
+            r
+            for r in rows
+            if (
+                r.get("status") in {"critical", "attention"}
+                or (r.get("anomaly_count") or 0) > 0
+            )
+        ]
+
+        attention_rows = sorted(
+            attention_rows,
+            key=lambda r: (
+                r.get("status") == "critical",
+                r.get("anomaly_count") or 0,
+                abs(r.get("energy_variance_percent") or 0)
+                + abs(r.get("water_variance_percent") or 0),
+            ),
+            reverse=True,
+        )
+        energy_total = float(
+            totals.get("energy_kwh") or 0
+        )
+
+        expected_energy_total = float(
+            totals.get("expected_energy_kwh") or 0
+        )
+
+        water_total = float(
+            totals.get("water_kl") or 0
+        )
+
+        expected_water_total = float(
+            totals.get("expected_water_kl") or 0
+        )
+
+        energy_variance_percent = (
+            round(
+                (
+                    (
+                        energy_total
+                        - expected_energy_total
+                    )
+                    / expected_energy_total
+                )
+                * 100,
+                2,
+            )
+            if expected_energy_total
+            else None
+        )
+
+        water_variance_percent = (
+            round(
+                (
+                    (
+                        water_total
+                        - expected_water_total
+                    )
+                    / expected_water_total
+                )
+                * 100,
+                2,
+            )
+            if expected_water_total
+            else None
+        )
+
+        evidence = {
+            "report_metadata": {
+                "period": period,
+                "facility_count": len(rows),
+            },
+
+            "portfolio_totals": {
+                "energy_kwh": energy_total,
+                "expected_energy_kwh": expected_energy_total,
+                "water_kl": water_total,
+                "expected_water_kl": expected_water_total,
+                "anomaly_count": int(
+                    totals.get("anomaly_count") or 0
+                ),
+                "critical_facilities": int(
+                    totals.get("critical_facilities") or 0
+                ),
+                "attention_facilities": int(
+                    totals.get("attention_facilities") or 0
+                ),
+            },
+
+            # Flat aliases keep the AI service backward-compatible.
+            # The nested portfolio_totals values remain authoritative.
+            "energy_kwh": energy_total,
+            "expected_energy_kwh": expected_energy_total,
+            "water_kl": water_total,
+            "expected_water_kl": expected_water_total,
+            "energy_variance_percent": energy_variance_percent,
+            "water_variance_percent": water_variance_percent,
+            "anomaly_count": int(totals.get("anomaly_count") or 0),
+            "critical_facilities": int(totals.get("critical_facilities") or 0),
+            "attention_facilities": int(totals.get("attention_facilities") or 0),
+
+            "portfolio_variance": {
+                "energy_variance_percent":
+                    energy_variance_percent,
+
+                "water_variance_percent":
+                    water_variance_percent,
+            },
+
+            "facilities_requiring_attention":
+                attention_rows[:10],
+
+            "top_facilities_by_deviation":
+                ranked_facilities[:10],
+        }
+
+        print(
+            "[Portfolio AI] Evidence sent to Ollama:"
+        )
+
+        print(
+            json.dumps(
+                evidence,
+                indent=2,
+                default=str,
+            )
+        )
+
+        # -----------------------------------------------------
+        # Evidence sent to Ollama
+        # -----------------------------------------------------
+        
+
+        result = generate_portfolio_report_analysis(
+            evidence
+        )
+
+        result = normalize_portfolio_ai_result(result)
+        analysis = result.get("analysis") or {}
+
+        # Protect portfolio endpoint from accidentally returning
+        # a facility-shaped AI response.
+        if isinstance(analysis, dict):
+            analysis.pop("facility_code", None)
+            analysis.pop("facility_name", None)
+            analysis.pop("status", None)
+            analysis.pop("energy_kwh", None)
+            analysis.pop("expected_energy_kwh", None)
+            analysis.pop("energy_variance_percent", None)
+            analysis.pop("water_kl", None)
+            analysis.pop("expected_water_kl", None)
+            analysis.pop("water_variance_percent", None)
+            analysis.pop("anomaly_count", None)
+            analysis.pop("primary_anomaly", None)
+
+        return {
+            "scope": "portfolio",
+            "period": period,
+            "facility_count": len(rows),
+            "success": result.get("success", False),
+            "model": result.get("model"),
+            "evidence_summary": totals,
+            "analysis": analysis,
+            "error": result.get("error"),
+        }
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        )
+
     except Exception as exc:
-        print(f'[Portfolio AI] Error -> {exc}')
-        raise HTTPException(status_code=500,detail=f'Portfolio AI analysis failed: {exc}')
+        print(f"[Portfolio AI] Error -> {exc}")
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Portfolio AI analysis failed: {exc}",
+        )
 
 
 @app.post("/api/reports/facilities/{facility_code}/ai-analysis")

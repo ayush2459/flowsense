@@ -1,12 +1,97 @@
-backend/.env
+# =========================
+# FlowSense Git Ignore
+# =========================
+
+# Secrets / environment
+.env
+.env.*
+!.env.example
+
+# Python environments
+venv/
+.venv/
+env/
+ENV/
 backend/venv/
-backend/__pycache__/
-frontend-react/node_modules/
-frontend-react/dist/
-__pycache__/
-*.pyc
-simulator/.env
 simulator/venv/
-backend/venv/
+
+# Python cache
+__pycache__/
 **/__pycache__/
 *.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Node
+node_modules/
+**/node_modules/
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Frontend builds
+dist/
+build/
+.vite/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs / local databases
+*.log
+*.sqlite
+*.sqlite3
+*.db
+
+# Generated documents/media
+*.pdf
+*.docx
+*.xlsx
+*.csv
+*.ogg
+*.mp3
+*.mp4
+*.wav
+*.mov
+
+# Installers / archives
+*.exe
+*.zip
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.tmp
+*.ai-backup
+*.reports-backup
+*.reports-pass2-backup
+*.devices-backup
+
+# Common accidental backup/source suffixes
+*.before_*
+*_backup_*
+*_BACKUP.*
+*.bak_*
+
+# Accidental temporary files
+$null
+(
+)
+Dict[str
+Optional[float]
+Optional[str]
+bool
+datetime
+effective(f)
+str
+str(latest_seen)
+b.performanceScore
+new.jpg
+new.png
