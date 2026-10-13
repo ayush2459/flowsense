@@ -691,6 +691,8 @@ def build_detection_payload(
 
     detection = analyze_telemetry(
         payload,
+        energy_baseline=payload.get("expected_energy_kwh"),
+        water_baseline=payload.get("expected_water_kl"),
         source_candidates=source_candidates,
     )
 
@@ -908,6 +910,7 @@ def persist_live_telemetry(
     db: Session,
     facility_code: str,
     payload: dict,
+    detection_payload: Optional[dict] = None,
 ):
 
     reading_time = payload.get(
@@ -1014,11 +1017,7 @@ def persist_live_telemetry(
                             energy_value
                         ),
 
-                    "quality_status":
-                        payload.get(
-                            "status",
-                            "good",
-                        ),
+                    "quality_status": {"healthy": "good", "attention": "suspect", "critical": "bad", "good": "good", "suspect": "suspect", "bad": "bad", "estimated": "estimated"}.get(str(payload.get("status", "good")).lower(), "estimated"),
                 },
             )
 
@@ -1086,17 +1085,287 @@ def persist_live_telemetry(
                             water_value
                         ),
 
-                    "quality_status":
-                        payload.get(
-                            "status",
-                            "good",
-                        ),
+                    "quality_status": {"healthy": "good", "attention": "suspect", "critical": "bad", "good": "good", "suspect": "suspect", "bad": "bad", "estimated": "estimated"}.get(str(payload.get("status", "good")).lower(), "estimated"),
                 },
             )
 
             persisted.append(
                 "water"
             )
+
+    # --------------------------------------------------------
+    # Persist detected anomalies (only when persistence is enabled)
+    # --------------------------------------------------------
+
+    # --------------------------------------------------------
+    # Sustained recovery: resolve after 3 normal readings.
+    # Recovery state is tracked independently per incident key.
+    # --------------------------------------------------------
+    db.execute(text("""
+        CREATE TABLE IF NOT EXISTS anomaly_recovery_state (
+            facility_id TEXT NOT NULL,
+            anomaly_type TEXT NOT NULL,
+            resource_type TEXT NOT NULL DEFAULT '',
+            normal_streak INTEGER NOT NULL DEFAULT 0,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (facility_id, anomaly_type, resource_type)
+        )
+    """))
+
+    def _recovery_num(value):
+        try:
+            return float(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    _detected_now = (detection_payload or {}).get("anomalies") or []
+    _detected_keys = set()
+
+    for _item in _detected_now:
+        if not isinstance(_item, dict) or not _item.get("anomaly_type"):
+            continue
+        _key = (
+            str(_item["anomaly_type"]).strip().lower(),
+            str(_item.get("resource_type") or "").strip().lower(),
+        )
+        _detected_keys.add(_key)
+        db.execute(text("""
+            INSERT INTO anomaly_recovery_state
+                (facility_id, anomaly_type, resource_type, normal_streak, updated_at)
+            VALUES (:fid, :kind, :resource, 0, NOW())
+            ON CONFLICT (facility_id, anomaly_type, resource_type)
+            DO UPDATE SET normal_streak = 0, updated_at = NOW()
+        """), {
+            "fid": str(facility_id),
+            "kind": _key[0],
+            "resource": _key[1],
+        })
+
+    _active_incidents = db.execute(text("""
+        SELECT anomaly_id, anomaly_type, resource_type
+        FROM anomalies
+        WHERE facility_id = :fid
+          AND LOWER(COALESCE(status, 'open')) IN
+              ('open', 'acknowledged', 'investigating')
+    """), {"fid": facility_id}).mappings().all()
+
+    _energy = _recovery_num(payload.get("energy_kwh"))
+    _expected_energy = (
+        _recovery_num(payload.get("expected_energy_kwh")) or 320.0
+    )
+    _water = _recovery_num(payload.get("water_kl"))
+    _expected_water = (
+        _recovery_num(payload.get("expected_water_kl")) or 30.0
+    )
+    _vibration = _recovery_num(payload.get("vibration_mm_s"))
+    _temperature = _recovery_num(payload.get("temperature_c"))
+
+    for _incident in _active_incidents:
+        _kind = str(_incident["anomaly_type"] or "").strip().lower()
+        _resource = str(_incident["resource_type"] or "").strip().lower()
+        _key = (_kind, _resource)
+
+        if _key in _detected_keys:
+            continue
+
+        if _kind == "high_energy":
+            _normal = (
+                _energy is not None
+                and _energy < _expected_energy * 1.30
+            )
+        elif _kind == "high_water":
+            _normal = (
+                _water is not None
+                and _water < _expected_water * 1.30
+            )
+        elif _kind in ("water_leak", "possible water leakage"):
+            _normal = payload.get("leak_detected") is False
+        elif _kind in ("equipment_vibration", "abnormal equipment vibration"):
+            _normal = _vibration is not None and _vibration < 8
+        elif _kind == "temperature":
+            _normal = _temperature is not None and _temperature < 40
+        elif _kind == "abnormal energy consumption":
+            _normal = (
+                _energy is not None
+                and _energy < _expected_energy * 1.30
+            )
+        else:
+            # Unknown anomaly types require their own recovery criteria.
+            continue
+
+        _result = db.execute(text("""
+            INSERT INTO anomaly_recovery_state
+                (facility_id, anomaly_type, resource_type, normal_streak, updated_at)
+            VALUES (:fid, :kind, :resource, :streak, NOW())
+            ON CONFLICT (facility_id, anomaly_type, resource_type)
+            DO UPDATE SET
+                normal_streak = CASE
+                    WHEN :streak = 1
+                        THEN anomaly_recovery_state.normal_streak + 1
+                    ELSE 0
+                END,
+                updated_at = NOW()
+            RETURNING normal_streak
+        """), {
+            "fid": str(facility_id),
+            "kind": _kind,
+            "resource": _resource,
+            "streak": 1 if _normal else 0,
+        }).scalar_one()
+
+        if _normal and _result >= 3:
+            db.execute(text("""
+                UPDATE anomalies
+                SET status = 'resolved'
+                WHERE anomaly_id = :anomaly_id
+                  AND LOWER(COALESCE(status, 'open')) IN
+                      ('open', 'acknowledged', 'investigating')
+            """), {"anomaly_id": _incident["anomaly_id"]})
+
+
+    facility_anomalies = (detection_payload or {}).get("anomalies") or []
+
+    for anomaly in facility_anomalies:
+        if not isinstance(anomaly, dict):
+            continue
+
+        anomaly_type = anomaly.get("anomaly_type")
+        if not anomaly_type:
+            continue
+
+        resource_type = anomaly.get("resource_type")
+        incident_key = "|".join((
+            str(facility_id),
+            str(anomaly_type).strip().lower(),
+            str(resource_type or "").strip().lower(),
+        ))
+
+        db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:incident_key, 0))"),
+            {"incident_key": incident_key},
+        )
+
+
+        # Refresh an existing active incident before attempting an insert.
+        # The advisory lock above serializes writes for this incident key.
+        db.execute(
+            text("""
+                UPDATE anomalies
+                SET
+                    severity = CASE
+                        WHEN LOWER(:severity) IN ('attention', 'warning')
+                            THEN 'medium'
+                        WHEN LOWER(:severity) IN
+                            ('low', 'medium', 'high', 'critical')
+                            THEN LOWER(:severity)
+                        ELSE 'medium'
+                    END,
+                    detected_at = CAST(:detected_at AS timestamptz),
+                    expected_value = :expected_value,
+                    actual_value = :actual_value,
+                    deviation_percent = :deviation_percent,
+                    estimated_loss = :estimated_loss,
+                    loss_unit = :loss_unit,
+                    description = :description
+                WHERE facility_id = :facility_id
+                  AND LOWER(BTRIM(anomaly_type)) =
+                      LOWER(BTRIM(:anomaly_type))
+                  AND LOWER(COALESCE(resource_type, '')) =
+                      LOWER(COALESCE(:resource_type, ''))
+                  AND LOWER(COALESCE(status, 'open')) IN
+                      ('open', 'acknowledged', 'investigating')
+            """),
+            {
+                "facility_id": facility_id,
+                "anomaly_type": anomaly_type,
+                "resource_type": resource_type,
+                "severity": anomaly.get("severity") or "attention",
+                "detected_at": (
+                    anomaly.get("detected_at")
+                    or datetime.now(timezone.utc).isoformat()
+                ),
+                "expected_value": anomaly.get("expected_value"),
+                "actual_value": anomaly.get("actual_value"),
+                "deviation_percent": anomaly.get("deviation_percent"),
+                "estimated_loss": anomaly.get("estimated_loss") or 0,
+                "loss_unit": anomaly.get("loss_unit"),
+                "description": (
+                    anomaly.get("description")
+                    or anomaly_type.replace("_", " ").title()
+                ),
+            },
+        )
+
+        db.execute(
+            text("""
+                INSERT INTO anomalies (
+                    anomaly_id,
+                    facility_id,
+                    anomaly_type,
+                    resource_type,
+                    severity,
+                    detected_at,
+                    expected_value,
+                    actual_value,
+                    deviation_percent,
+                    estimated_loss,
+                    loss_unit,
+                    status,
+                    description
+                )
+                SELECT
+                    gen_random_uuid(),
+                    :facility_id,
+                    :anomaly_type,
+                    :resource_type,
+                    CASE
+                    WHEN LOWER(:severity) IN ('attention', 'warning') THEN 'medium'
+                    WHEN LOWER(:severity) IN ('low', 'medium', 'high', 'critical')
+                        THEN LOWER(:severity)
+                    ELSE 'medium'
+                END,
+                    CAST(:detected_at AS timestamptz),
+                    :expected_value,
+                    :actual_value,
+                    :deviation_percent,
+                    :estimated_loss,
+                    :loss_unit,
+                    'open',
+                    :description
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM anomalies existing
+                    WHERE existing.facility_id = :facility_id
+                      AND LOWER(BTRIM(existing.anomaly_type))
+                          = LOWER(BTRIM(:anomaly_type))
+                      AND LOWER(COALESCE(existing.resource_type, ''))
+                          = LOWER(COALESCE(:resource_type, ''))
+                      AND LOWER(COALESCE(existing.status, 'open')) IN (
+                          'open', 'acknowledged', 'investigating'
+                      )
+                )
+            """),
+            {
+                "facility_id": facility_id,
+                "anomaly_type": anomaly_type,
+                "resource_type": resource_type,
+                "severity": anomaly.get("severity") or "attention",
+                "detected_at": (
+                    anomaly.get("detected_at")
+                    or datetime.now(timezone.utc).isoformat()
+                ),
+                "expected_value": anomaly.get("expected_value"),
+                "actual_value": anomaly.get("actual_value"),
+                "deviation_percent": anomaly.get("deviation_percent"),
+                "estimated_loss": anomaly.get("estimated_loss") or 0,
+                "loss_unit": anomaly.get("loss_unit"),
+                "description": (
+                    anomaly.get("description")
+                    or anomaly_type.replace("_", " ").title()
+                ),
+            },
+        )
+        persisted.append("anomaly:" + anomaly_type)
 
     db.commit()
 
@@ -1112,6 +1381,7 @@ def persist_live_telemetry(
 def persist_live_telemetry_background(
     facility_code: str,
     payload: dict,
+    detection_payload: Optional[dict] = None,
 ) -> dict:
     """
     Persistence helper for the async live endpoint.
@@ -1128,6 +1398,7 @@ def persist_live_telemetry_background(
             db=db,
             facility_code=facility_code,
             payload=payload,
+            detection_payload=detection_payload,
         )
 
     except Exception:
@@ -1524,13 +1795,26 @@ def facility_water_trend(
 @app.get("/api/portfolio/energy")
 def portfolio_energy(
     hours: int = 24,
+    period: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
 
-    hours = max(
-        1,
-        min(hours, 720),
-    )
+    if period is not None:
+        period_hours = {
+            "24h": 24,
+            "1d": 24,
+            "7d": 168,
+            "30d": 720,
+        }
+        normalized_period = period.strip().lower()
+        if normalized_period not in period_hours:
+            raise HTTPException(
+                status_code=400,
+                detail="period must be one of: 24h, 1d, 7d, 30d",
+            )
+        hours = period_hours[normalized_period]
+    else:
+        hours = max(1, min(hours, 720))
 
     rows = db.execute(
         text(
@@ -1582,13 +1866,26 @@ def portfolio_energy(
 @app.get("/api/portfolio/water")
 def portfolio_water(
     hours: int = 24,
+    period: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
 
-    hours = max(
-        1,
-        min(hours, 720),
-    )
+    if period is not None:
+        period_hours = {
+            "24h": 24,
+            "1d": 24,
+            "7d": 168,
+            "30d": 720,
+        }
+        normalized_period = period.strip().lower()
+        if normalized_period not in period_hours:
+            raise HTTPException(
+                status_code=400,
+                detail="period must be one of: 24h, 1d, 7d, 30d",
+            )
+        hours = period_hours[normalized_period]
+    else:
+        hours = max(1, min(hours, 720))
 
     rows = db.execute(
         text(
@@ -1773,15 +2070,15 @@ async def broadcast_live_reading(
     Normal live flow:
 
         Simulator
-            ↓
+            â†“
         FastAPI
-            ↓
+            â†“
         In-memory source mapping
-            ↓
+            â†“
         Detection engine
-            ↓
+            â†“
         WebSocket broadcast
-            ↓
+            â†“
         Dashboard
 
     PostgreSQL is NOT touched during normal
@@ -1887,6 +2184,85 @@ async def broadcast_live_reading(
         }
 
     # --------------------------------------------------------
+
+    # Safety net: preserve explicit simulator events and clear baseline breaches.
+    if not isinstance(detection_payload, dict):
+        detection_payload = {}
+    detected = detection_payload.get("anomalies")
+    if not isinstance(detected, list):
+        detected = []
+    if not detected:
+        detected = []
+        def _num(v):
+            try:
+                return float(v) if v is not None else None
+            except (TypeError, ValueError):
+                return None
+
+        energy = _num(live_payload.get("energy_kwh"))
+        expected_energy = _num(live_payload.get("expected_energy_kwh"))
+        water = _num(live_payload.get("water_kl"))
+        expected_water = _num(live_payload.get("expected_water_kl"))
+        explicit = live_payload.get("anomaly_type")
+        if isinstance(explicit, str) and explicit.lower() in ("none", "false", "healthy", ""):
+            explicit = None
+
+        def _fallback_anomaly(kind, resource, actual, expected, unit):
+            deviation = (
+                ((actual - expected) / expected) * 100
+                if kind != "water_leak"
+                and actual is not None
+                and expected is not None
+                and expected > 0
+                else None
+            )
+            severity = "critical" if (
+                deviation is not None and deviation >= 30
+            ) or str(live_payload.get("status", "")).lower() == "critical" else "attention"
+            return {
+                "anomaly_type": kind,
+                "resource_type": resource,
+                "severity": severity,
+                "detected_at": live_payload.get("reading_time") or datetime.now(timezone.utc).isoformat(),
+                "expected_value": expected,
+                "actual_value": actual,
+                "deviation_percent": round(deviation, 2) if deviation is not None else None,
+                "estimated_loss": max(0, actual - expected) if actual is not None and expected is not None else 0,
+                "loss_unit": unit,
+                "description": f"{kind.replace('_', ' ').title()} detected from live telemetry.",
+            }
+
+        if explicit:
+            kind = str(explicit).lower()
+            resource = "water" if "water" in kind or "leak" in kind else (
+                "energy" if "energy" in kind else
+                "equipment" if "vibration" in kind else
+                "environment" if "temperature" in kind else "unknown"
+            )
+            actual = water if resource == "water" else energy if resource == "energy" else _num(live_payload.get("vibration_mm_s")) if resource == "equipment" else _num(live_payload.get("temperature_c"))
+            expected = expected_water if resource == "water" else expected_energy if resource == "energy" else None
+            detected.append(_fallback_anomaly(kind, resource, actual, expected, "kL" if resource == "water" else "kWh" if resource == "energy" else None))
+
+        if energy is not None and expected_energy and expected_energy > 0 and energy >= expected_energy * 1.30:
+            if not any(a.get("anomaly_type") == "high_energy" for a in detected):
+                detected.append(_fallback_anomaly("high_energy", "energy", energy, expected_energy, "kWh"))
+        if water is not None and expected_water and expected_water > 0 and water >= expected_water * 1.30:
+            if not any(a.get("anomaly_type") == "high_water" for a in detected):
+                detected.append(_fallback_anomaly("high_water", "water", water, expected_water, "kL"))
+        if live_payload.get("leak_detected") is True and not any(a.get("anomaly_type") == "water_leak" for a in detected):
+            detected.append(_fallback_anomaly("water_leak", "water", water, expected_water, "kL"))
+        vibration = _num(live_payload.get("vibration_mm_s"))
+        if vibration is not None and vibration >= 8 and not any(a.get("anomaly_type") == "equipment_vibration" for a in detected):
+            detected.append(_fallback_anomaly("equipment_vibration", "equipment", vibration, None, None))
+        temperature = _num(live_payload.get("temperature_c"))
+        if temperature is not None and temperature >= 40 and not any(a.get("anomaly_type") == "temperature" for a in detected):
+            detected.append(_fallback_anomaly("temperature", "environment", temperature, None, None))
+
+    detection_payload["anomalies"] = detected
+    detection_payload["anomaly_count"] = len(detected)
+    if detected and not detection_payload.get("primary_anomaly"):
+        detection_payload["primary_anomaly"] = detected[0]
+
     # 4. Optional persistence
     # --------------------------------------------------------
 
@@ -1907,6 +2283,7 @@ async def broadcast_live_reading(
                     persist_live_telemetry_background,
                     facility_code,
                     live_payload,
+                    detection_payload,
                 )
             )
 
@@ -2677,28 +3054,57 @@ def portfolio_report_ai_analysis(period: str = "24h", db: Session = Depends(get_
                 ) * 100
 
             # -------------------------------------------------
-            # Facility status
+            # Facility status: unresolved issues only
             # -------------------------------------------------
+            resolved_states = {"resolved", "false_positive", "closed"}
+
+            active_candidates = [
+                a for a in anomalies
+                if isinstance(a, dict)
+                and str(a.get("status") or "open").strip().lower()
+                    not in resolved_states
+            ]
+
+            # Deduplicate unresolved incidents within this facility.
+            # Keep the newest record for each anomaly type and resource.
+            active_candidates.sort(
+                key=lambda a: str(a.get("detected_at") or ""),
+                reverse=True,
+            )
+            active_anomalies = []
+            seen_active_keys = set()
+
+            for anomaly in active_candidates:
+                incident_key = (
+                    str(anomaly.get("anomaly_type") or anomaly.get("type") or "unknown")
+                        .strip().lower(),
+                    str(anomaly.get("resource_type") or "").strip().lower(),
+                )
+                if incident_key in seen_active_keys:
+                    continue
+                seen_active_keys.add(incident_key)
+                active_anomalies.append(anomaly)
+
+            active_alerts = [
+                a for a in alerts
+                if isinstance(a, dict)
+                and str(a.get("status") or "open").strip().lower()
+                    not in resolved_states
+            ]
+
             status = "normal"
 
-            if len(anomalies) > 0:
+            if active_anomalies or active_alerts:
                 status = "attention"
 
             if any(
-                str(a.get("severity") or "").lower() == "critical"
-                for a in anomalies
-                if isinstance(a, dict)
+                str(a.get("severity") or "").strip().lower() == "critical"
+                for a in active_anomalies + active_alerts
             ):
                 status = "critical"
 
-            if any(
-                str(a.get("severity") or "").lower() == "critical"
-                for a in alerts
-                if isinstance(a, dict)
-            ):
-                status = "critical"
-
-            anomaly_count = len(anomalies)
+            # This field now means unresolved anomaly count.
+            anomaly_count = len(active_anomalies)
 
             # -------------------------------------------------
             # Portfolio totals
@@ -2727,8 +3133,8 @@ def portfolio_report_ai_analysis(period: str = "24h", db: Session = Depends(get_
             # -------------------------------------------------
             primary_anomaly = None
 
-            if anomalies:
-                first_anomaly = anomalies[0]
+            if active_anomalies:
+                first_anomaly = active_anomalies[0]
 
                 if isinstance(first_anomaly, dict):
                     primary_anomaly = (
@@ -2765,6 +3171,31 @@ def portfolio_report_ai_analysis(period: str = "24h", db: Session = Depends(get_
             )
 
         # -----------------------------------------------------
+        # Compare actual and expected values for the same facilities.
+        energy_comparable = [
+            r for r in rows
+            if r.get("energy_kwh") is not None
+            and r.get("expected_energy_kwh") is not None
+        ]
+        water_comparable = [
+            r for r in rows
+            if r.get("water_kl") is not None
+            and r.get("expected_water_kl") is not None
+        ]
+
+        totals["energy_kwh"] = sum(
+            float(r["energy_kwh"]) for r in energy_comparable
+        )
+        totals["expected_energy_kwh"] = sum(
+            float(r["expected_energy_kwh"]) for r in energy_comparable
+        )
+        totals["water_kl"] = sum(
+            float(r["water_kl"]) for r in water_comparable
+        )
+        totals["expected_water_kl"] = sum(
+            float(r["expected_water_kl"]) for r in water_comparable
+        )
+
         # Round totals
         # -----------------------------------------------------
         totals = {
@@ -2855,6 +3286,19 @@ def portfolio_report_ai_analysis(period: str = "24h", db: Session = Depends(get_
             "report_metadata": {
                 "period": period,
                 "facility_count": len(rows),
+                "energy_comparable_facilities": len(energy_comparable),
+                "water_comparable_facilities": len(water_comparable),
+                "energy_reading_facilities": sum(
+                    1 for r in rows if r.get("energy_kwh") is not None
+                ),
+                "water_reading_facilities": sum(
+                    1 for r in rows if r.get("water_kl") is not None
+                ),
+                "metric_semantics": (
+                    "Comparisons use facilities with both actual and expected "
+                    "values. Latest readings are not assumed to represent "
+                    "period consumption."
+                ),
             },
 
             "portfolio_totals": {
@@ -3034,5 +3478,6 @@ def facility_report_ai_analysis(
             status_code=500,
             detail=f"AI report analysis failed: {exc}",
         )
+
 
 

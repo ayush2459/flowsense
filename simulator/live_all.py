@@ -2,6 +2,7 @@
 import os
 import random
 import time
+from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import psycopg2
@@ -68,7 +69,9 @@ def generate_telemetry(
     facility_code,
     anomaly_rate
 ):
-    anomaly = random.random() < anomaly_rate
+    # Cap simulated anomaly frequency to avoid flooding the database.
+    effective_anomaly_rate = min(max(float(anomaly_rate), 0.0), 0.01)
+    anomaly = random.random() < effective_anomaly_rate
 
     # --------------------------------------------------------
     # Normal values
@@ -275,7 +278,7 @@ def generate_telemetry(
 
     return {
 
-        "reading_time": time.time(),
+        "reading_time": datetime.now(timezone.utc).isoformat(),
 
         "energy_kwh": round(
             energy,
@@ -378,7 +381,8 @@ def broadcast(
         response = requests.post(
             url,
             json=payload,
-            timeout=2
+            params={"persist": "true"},
+            timeout=(10,30),
         )
 
         response.raise_for_status()
@@ -391,11 +395,22 @@ def broadcast(
         )
 
     except Exception as exc:
+        response = getattr(exc, "response", None)
+
+        if response is not None:
+            error_detail = (
+                f"{exc} | HTTP {response.status_code}: "
+                f"{response.text[:500]}"
+            )
+        else:
+            error_detail = repr(exc)
+
+        print(f"[Broadcast Error] {facility_code}: {error_detail}", flush=True)
 
         return (
             facility_code,
             False,
-            str(exc),
+            error_detail,
             payload
         )
 

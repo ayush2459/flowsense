@@ -1,4 +1,4 @@
-const WS_BASE = "ws://localhost:8000";
+const WS_BASE = "ws://localhost:8001";
 
 export function connectAllFacilities({
   onMessage,

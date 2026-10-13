@@ -162,11 +162,11 @@ def _severity_from_deviation(
     warning_threshold: float,
     critical_threshold: float,
 ) -> str:
-    """
-    Convert positive percentage deviation into severity.
-    """
+    """Classify excessive positive deviation only."""
+    if deviation_percent <= 0:
+        return "healthy"
 
-    deviation = abs(deviation_percent) / 100.0
+    deviation = deviation_percent / 100.0
 
     if deviation >= critical_threshold:
         return "critical"
@@ -175,7 +175,6 @@ def _severity_from_deviation(
         return "attention"
 
     return "healthy"
-
 
 def _now_iso() -> str:
     """
@@ -390,7 +389,7 @@ def detect_energy_anomaly(
         resource_type="energy",
         severity=severity,
         description=(
-            f"Energy consumption is {abs(deviation):.1f}% "
+            f"Energy consumption is {deviation:.1f}% "
             f"above the expected baseline."
         ),
         expected_value=expected,
@@ -480,7 +479,7 @@ def detect_water_anomaly(
         resource_type="water",
         severity=severity,
         description=(
-            f"Water consumption is {abs(deviation):.1f}% "
+            f"Water consumption is {deviation:.1f}% "
             f"above the expected baseline."
         ),
         expected_value=expected,
@@ -546,6 +545,9 @@ def detect_water_leak(
     evidence = {}
 
     score = 0
+    flow_signal = False
+    pressure_signal = False
+    water_signal = False
 
     # --------------------------------------------------------
     # Leak sensor
@@ -580,9 +582,11 @@ def detect_water_leak(
 
             if flow_deviation >= FLOW_CRITICAL_DEVIATION * 100:
                 score += 3
+                flow_signal = True
 
             elif flow_deviation >= FLOW_WARNING_DEVIATION * 100:
                 score += 2
+                flow_signal = True
 
     # --------------------------------------------------------
     # Pressure drop
@@ -606,12 +610,12 @@ def detect_water_leak(
         )
 
         if pressure_drop >= PRESSURE_CRITICAL_DROP:
-
             score += 3
+            pressure_signal = True
 
         elif pressure_drop >= PRESSURE_WARNING_DROP:
-
             score += 2
+            pressure_signal = True
 
     # --------------------------------------------------------
     # High water consumption
@@ -635,18 +639,24 @@ def detect_water_leak(
         )
 
         if water_deviation >= WATER_CRITICAL_DEVIATION * 100:
-
             score += 2
+            water_signal = True
 
         elif water_deviation >= WATER_WARNING_DEVIATION * 100:
-
             score += 1
+            water_signal = True
 
     # --------------------------------------------------------
     # Determine result
     # --------------------------------------------------------
 
-    if score < 3:
+    independent_signal_count = sum(
+        (flow_signal, pressure_signal, water_signal)
+    )
+
+    if not leak_flag and (
+        score < 3 or independent_signal_count < 2
+    ):
 
         return DetectionResult(
             detected=False,

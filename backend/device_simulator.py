@@ -6,7 +6,7 @@ import urllib.request
 from datetime import datetime, timezone
 
 
-API_BASE = "http://127.0.0.1:8000"
+API_BASE = "http://127.0.0.1:8001"
 
 # Device sends a heartbeat every 15 seconds while it is online.
 HEARTBEAT_INTERVAL_SECONDS = 15
