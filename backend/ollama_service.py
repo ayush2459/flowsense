@@ -717,7 +717,7 @@ Return ONLY valid JSON:
         response = requests.post(
             OLLAMA_URL,
             json=payload,
-            timeout=(5, 25),
+            timeout=(5, 120),
         )
 
         response.raise_for_status()
