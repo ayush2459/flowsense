@@ -5950,3 +5950,39 @@ td:first-child small {
     width: 100%;
   }
 }
+
+/* FlowSense: make Resource Discrepancy Alerts use the full grid width */
+.main-grid > .resource-discrepancy-full {
+  grid-column: 1 / -1;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  color: #0f172a;
+}
+
+.resource-discrepancy-full > section {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  box-sizing: border-box;
+  color: #0f172a;
+}
+
+.resource-discrepancy-full > section h2,
+.resource-discrepancy-full > section p,
+.resource-discrepancy-full > section strong,
+.resource-discrepancy-full > section label {
+  color: #0f172a;
+}
+
+.resource-discrepancy-full > section select {
+  color: #0f172a;
+  background: #ffffff;
+  border: 1px solid #94a3b8;
+  min-height: 40px;
+  max-width: 100%;
+}
+
+.resource-discrepancy-full > section > div {
+  min-width: 0;
+}

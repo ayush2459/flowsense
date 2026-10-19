@@ -66,6 +66,7 @@ def get_conn():
 # BROADCAST
 # ============================================================
 
+
 def broadcast_reading(
     facility_code,
     payload
@@ -83,6 +84,13 @@ def broadcast_reading(
     )
 
     try:
+
+        # Diagnostic only: show the values being sent.
+        print(
+            f"[Simulator Sending] {facility_code} | "
+            f"power_factor={payload.get('power_factor')!r} | "
+            f"load_factor={payload.get('load_factor')!r}"
+        )
 
         response = requests.post(
             url,
@@ -110,6 +118,7 @@ def broadcast_reading(
         )
 
 
+
 # ============================================================
 # PUSH READING
 # ============================================================
@@ -121,6 +130,16 @@ def push_reading(
 ):
 
     now = datetime.now(timezone.utc)
+
+    # Simulated electrical quality readings for live discrepancy monitoring.
+    # Values are ratios between 0 and 1, not percentages.
+    if inject_anomaly:
+        power_factor = round(random.uniform(0.78, 0.89), 3)
+        load_factor = round(random.uniform(0.35, 0.49), 3)
+    else:
+        power_factor = round(random.uniform(0.86, 0.995), 3)
+        load_factor = round(random.uniform(0.42, 0.96), 3)
+
 
     energy_value = None
     water_value = None
@@ -492,6 +511,13 @@ def push_reading(
 
         "water_kl":
             water_value,
+
+        "power_factor":
+            power_factor,
+
+        "load_factor":
+            load_factor,
+
 
         "water_flow_lpm":
             round(water_flow, 3)

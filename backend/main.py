@@ -1,4 +1,4 @@
-"""
+﻿"""
 FlowSense API - REST + realtime WebSocket backend.
 
 Stage 3:
@@ -21,6 +21,8 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, Optional
 from device_routes import router as device_router
+from resource_discrepancy_routes import router as resource_discrepancy_router
+from resource_discrepancy_engine import analyze_facility
 from device_realtime import manager as device_ws_manager
 
 from fastapi import (
@@ -342,6 +344,7 @@ app.include_router(auth_router)
 app.include_router(settings_router)
 app.include_router(maintenance_router)
 app.include_router(device_router)
+app.include_router(resource_discrepancy_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -2070,15 +2073,15 @@ async def broadcast_live_reading(
     Normal live flow:
 
         Simulator
-            â†“
+            Ã¢â€ â€œ
         FastAPI
-            â†“
+            Ã¢â€ â€œ
         In-memory source mapping
-            â†“
+            Ã¢â€ â€œ
         Detection engine
-            â†“
+            Ã¢â€ â€œ
         WebSocket broadcast
-            â†“
+            Ã¢â€ â€œ
         Dashboard
 
     PostgreSQL is NOT touched during normal
@@ -2097,6 +2100,12 @@ async def broadcast_live_reading(
 
     live_payload = dict(
         payload
+    )
+
+    print(
+        f"[FlowSense Telemetry Input] {facility_code} | "
+        f"power_factor={live_payload.get('power_factor')!r} | "
+        f"load_factor={live_payload.get('load_factor')!r}"
     )
 
     if not live_payload.get(
@@ -2313,6 +2322,21 @@ async def broadcast_live_reading(
     # 5. Build realtime event
     # --------------------------------------------------------
 
+    # Phase 2: analyze the existing live telemetry without
+    # changing the established detection or persistence flow.
+    discrepancy_telemetry = {
+        "facility_code": facility_code,
+        "facility_name": live_payload.get("facility_name"),
+        "energy_kwh": live_payload.get("energy_kwh"),
+        "expected_energy_kwh": live_payload.get("expected_energy_kwh"),
+        "water_kl": live_payload.get("water_kl"),
+        "expected_water_kl": live_payload.get("expected_water_kl"),
+        "power_factor": live_payload.get("power_factor") if live_payload.get("power_factor") is not None else payload.get("power_factor"),
+        "load_factor": live_payload.get("load_factor") if live_payload.get("load_factor") is not None else payload.get("load_factor"),
+    }
+
+    resource_discrepancy = analyze_facility(discrepancy_telemetry)
+    resource_discrepancy["metadata"]["live_data_connected"] = True
     event = {
         "type":
             "telemetry",
@@ -2330,6 +2354,7 @@ async def broadcast_live_reading(
 
         "detection":
             detection_payload,
+        "resource_discrepancy": resource_discrepancy,
 
         "persistence":
             persistence_result,
@@ -3478,6 +3503,9 @@ def facility_report_ai_analysis(
             status_code=500,
             detail=f"AI report analysis failed: {exc}",
         )
+
+
+
 
 
 

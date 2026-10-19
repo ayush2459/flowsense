@@ -30,7 +30,8 @@ import {
 import { api } from "./services/api";
 import { useFlowSense } from "./context/FlowSenseContext";
 
-const ENERGY_TARIFF = 8.5; // INR per kWh
+
+import ResourceDiscrepancyAlerts from './ResourceDiscrepancyAlerts';const ENERGY_TARIFF = 8.5; // INR per kWh
 const WATER_TARIFF = 35; // INR per kL
 
 const clamp = (v, min, max) =>
@@ -58,6 +59,65 @@ const shortTime = (v) =>
       })
     : "â€”";
 
+
+// Safely read numeric telemetry, including nested backend metric objects.
+function readMetricValue(value) {
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value === "number" || typeof value === "string") {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  }
+  if (typeof value === "object") {
+    for (const key of ["value", "current", "reading", "measured", "average", "latest", "ratio"]) {
+      if (value[key] !== undefined) {
+        const n = readMetricValue(value[key]);
+        if (n !== null) return n;
+      }
+    }
+  }
+  return null;
+}
+
+function getLiveMetric(row, keys) {
+  if (!row) return null;
+  const sources = [
+    row,
+    row.telemetry,
+    row.metrics,
+    row.resource_discrepancy,
+    row.resource_discrepancy?.metrics,
+    row.resource_discrepancy?.values,
+    row.resource_discrepancy?.results
+  ];
+  for (const source of sources) {
+    if (!source || typeof source !== "object") continue;
+    for (const key of keys) {
+      const value = readMetricValue(source[key]);
+      if (value !== null) return value;
+    }
+  }
+  return null;
+}
+
+function normalizeRatio(value) {
+  if (value === null) return null;
+  if (value > 1 && value <= 100) return value / 100;
+  return value >= 0 && value <= 1 ? value : null;
+}
+
+function averageAvailable(values) {
+  const valid = values.filter((v) => v !== null && Number.isFinite(v));
+  return valid.length
+    ? valid.reduce((sum, value) => sum + value, 0) / valid.length
+    : null;
+}
+
+function factorTone(value, min, max) {
+  if (value === null) return "gray";
+  if (value < min) return "yellow";
+  if (value > max) return "red";
+  return "green";
+}
 function fallbackStatus(f, anomalies) {
   const rows = anomalies.filter(
     (a) => a.facility_code === f.facility_code
@@ -306,6 +366,25 @@ export default function RealtimeOverview({
   }, [live, selected, lastTick, isPortfolio]);
 
   const selectedLive = isPortfolio ? null : live[selected];
+
+  const powerFactorFor = (row) =>
+    normalizeRatio(getLiveMetric(row, ["power_factor", "powerFactor", "pf"]));
+
+  const loadFactorFor = (row) =>
+    normalizeRatio(getLiveMetric(row, ["load_factor", "loadFactor", "lf"]));
+
+  const powerFactorValue = isPortfolio
+    ? averageAvailable(liveValues.map(powerFactorFor))
+    : powerFactorFor(selectedLive);
+
+  const loadFactorValue = isPortfolio
+    ? averageAvailable(liveValues.map(loadFactorFor))
+    : loadFactorFor(selectedLive);
+
+  const hasPowerTelemetry = isPortfolio
+    ? liveValues.some((row) => getLiveMetric(row, ["power_kw", "powerKw", "active_power"]) !== null)
+      || getLiveMetric(totals, ["power"]) !== null
+    : getLiveMetric(selectedLive, ["power_kw", "powerKw", "active_power"]) !== null;
 
   const selectedFacility = isPortfolio
     ? null
@@ -888,6 +967,13 @@ export default function RealtimeOverview({
             sub="Immediate attention"
             tone="red"
           />
+          <Kpi
+            icon={Activity}
+            label="Alerts"
+            value={currentFacilityAlerts}
+            sub="Current / recent issues"
+            tone={currentFacilityAlerts > 0 ? "red" : "green"}
+          />
 
           <Kpi
             icon={Zap}
@@ -911,6 +997,45 @@ export default function RealtimeOverview({
                 : "Live facility reading"
             }
             tone="cyan"
+          />
+          <Kpi
+            icon={Zap}
+            label="Total Power"
+            value={hasPowerTelemetry ? `${num(powerTotal)} kW` : "—"}
+            sub={hasPowerTelemetry ? "Live power reading" : "Insufficient telemetry"}
+            tone={hasPowerTelemetry ? "blue" : "gray"}
+          />
+
+          <Kpi
+            icon={Activity}
+            label="Power Factor"
+            value={powerFactorValue === null ? "—" : powerFactorValue.toFixed(3)}
+            sub={
+              powerFactorValue === null
+                ? "Insufficient telemetry"
+                : powerFactorValue < 0.97
+                ? "Below target · 0.97–0.98"
+                : powerFactorValue > 0.98
+                ? "Above target · 0.97–0.98"
+                : "Within target · 0.97–0.98"
+            }
+            tone={factorTone(powerFactorValue, 0.97, 0.98)}
+          />
+
+          <Kpi
+            icon={BarChart3}
+            label="Load Factor"
+            value={loadFactorValue === null ? "—" : `${(loadFactorValue * 100).toFixed(1)}%`}
+            sub={
+              loadFactorValue === null
+                ? "Insufficient telemetry"
+                : loadFactorValue < 0.65
+                ? "Below target · 65–85%"
+                : loadFactorValue > 0.85
+                ? "Above target · 65–85%"
+                : "Within target · 65–85%"
+            }
+            tone={factorTone(loadFactorValue, 0.65, 0.85)}
           />
 
           <Kpi
@@ -1220,6 +1345,15 @@ export default function RealtimeOverview({
                 Waiting for realtime anomaly events.
               </div>
             )}
+          </Card>
+          <Card className="resource-discrepancy-full">
+            <PanelHead
+              icon={AlertTriangle}
+              title="Resource Discrepancy Alerts"
+              sub="Energy and water deviations across facilities"
+              to="/alerts"
+            />
+            <ResourceDiscrepancyAlerts />
           </Card>
         </div>
 
@@ -1532,6 +1666,11 @@ export default function RealtimeOverview({
     </div>
   );
 }
+
+
+
+
+
 
 
 
