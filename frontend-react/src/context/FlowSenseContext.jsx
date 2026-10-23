@@ -63,9 +63,6 @@ function calculateEnergyLoss(data, detection, expectedEnergy) {
 }
 
 function calculateWaterLoss(data, detection, expectedWater) {
-  // The realtime simulator already sends the actual calculated
-  // water loss. Prefer that value over backend detection output,
-  // because backend detection may legitimately return 0.
   const dataLoss = data?.estimated_water_loss_kl;
 
   if (
@@ -76,8 +73,6 @@ function calculateWaterLoss(data, detection, expectedWater) {
     return Math.max(0, Number(dataLoss));
   }
 
-  // Use backend detection loss only when the realtime telemetry
-  // packet does not contain a water-loss value.
   const detectionLoss =
     detection?.estimated_water_loss_kl;
 
@@ -89,8 +84,6 @@ function calculateWaterLoss(data, detection, expectedWater) {
     return Math.max(0, Number(detectionLoss));
   }
 
-  // Final fallback: calculate excess water consumption
-  // against the expected baseline.
   const waterConsumption =
     toNumber(data?.water_kl);
 
@@ -104,6 +97,83 @@ function calculateWaterLoss(data, detection, expectedWater) {
     0,
     waterConsumption - expectedConsumption
   );
+}
+
+function readLiveFactor(message, aliases) {
+  const discrepancy =
+    message?.resource_discrepancy ??
+    message?.data?.resource_discrepancy ??
+    message?.detection?.resource_discrepancy ??
+    null;
+
+  const roots = [
+    message,
+    message?.data,
+    message?.detection,
+    discrepancy,
+    discrepancy?.metrics,
+    discrepancy?.results,
+    discrepancy?.values,
+    discrepancy?.telemetry,
+    discrepancy?.data,
+    message?.data?.metrics,
+    message?.data?.telemetry,
+  ];
+
+  const readNumber = (value, depth = 0) => {
+    if (value === null || value === undefined || value === "") {
+      return null;
+    }
+
+    if (depth > 4) return null;
+
+    if (typeof value === "object" && !Array.isArray(value)) {
+      for (const key of [
+        "actual",
+        "value",
+        "current",
+        "measured",
+        "reading",
+        "average",
+        "latest",
+        "ratio",
+      ]) {
+        if (value[key] !== undefined) {
+          const result = readNumber(value[key], depth + 1);
+          if (result !== null) return result;
+        }
+      }
+
+      return null;
+    }
+
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+  };
+
+  for (const root of roots) {
+    if (!root || typeof root !== "object") continue;
+
+    const containers = [
+      root,
+      root.metrics,
+      root.results,
+      root.values,
+      root.telemetry,
+      root.data,
+    ];
+
+    for (const container of containers) {
+      if (!container || typeof container !== "object") continue;
+
+      for (const alias of aliases) {
+        const result = readNumber(container[alias]);
+        if (result !== null) return result;
+      }
+    }
+  }
+
+  return null;
 }
 
 function normalizeMessage(message) {
@@ -177,6 +247,38 @@ function normalizeMessage(message) {
       data.demand_kw
     )
   );
+
+  const powerFactorRaw = firstDefined(
+    data.power_factor,
+    data.powerFactor,
+    data.pf,
+    message?.power_factor,
+    message?.powerFactor,
+    message?.pf,
+    detection?.power_factor,
+    detection?.powerFactor,
+    detection?.pf
+  );
+
+  const loadFactorRaw = firstDefined(
+    data.load_factor,
+    data.loadFactor,
+    data.lf,
+    message?.load_factor,
+    message?.loadFactor,
+    message?.lf,
+    detection?.load_factor,
+    detection?.loadFactor,
+    detection?.lf
+  );
+
+  const powerFactor = powerFactorRaw === undefined
+    ? null
+    : toNumber(powerFactorRaw, null);
+
+  const loadFactor = loadFactorRaw === undefined
+    ? null
+    : toNumber(loadFactorRaw, null);
 
   const voltage = toNumber(
     firstDefined(
@@ -298,19 +400,11 @@ function normalizeMessage(message) {
       data.reading_time ||
       new Date().toISOString(),
 
-    // ------------------------------------------------------
-    // ENERGY
-    // ------------------------------------------------------
-
     energy_kwh:
       energy,
 
     expected_energy_kwh:
       expectedEnergy,
-
-    // ------------------------------------------------------
-    // WATER
-    // ------------------------------------------------------
 
     water_kl:
       water,
@@ -318,12 +412,12 @@ function normalizeMessage(message) {
     expected_water_kl:
       expectedWater,
 
-    // ------------------------------------------------------
-    // ELECTRICAL
-    // ------------------------------------------------------
-
     power_kw:
       power,
+
+    power_factor: powerFactor,
+
+    load_factor: loadFactor,
 
     voltage_v:
       voltage,
@@ -331,29 +425,17 @@ function normalizeMessage(message) {
     current_a:
       current,
 
-    // ------------------------------------------------------
-    // WATER TELEMETRY
-    // ------------------------------------------------------
-
     water_flow_lpm:
       waterFlow,
 
     water_pressure_bar:
       waterPressure,
 
-    // ------------------------------------------------------
-    // RESOURCE REUSE / TREATMENT
-    // ------------------------------------------------------
-
     treatment_rate:
       treatmentRate,
 
     reuse_rate:
       reuseRate,
-
-    // ------------------------------------------------------
-    // ENVIRONMENT
-    // ------------------------------------------------------
 
     temperature_c:
       temperature,
@@ -363,10 +445,6 @@ function normalizeMessage(message) {
 
     vibration_mm_s:
       vibration,
-
-    // ------------------------------------------------------
-    // LEAK / DETECTION
-    // ------------------------------------------------------
 
     leak_detected:
       Boolean(data.leak_detected),
@@ -386,10 +464,6 @@ function normalizeMessage(message) {
     anomaly_count:
       anomalyCount,
 
-    // ------------------------------------------------------
-    // LOSSES
-    // ------------------------------------------------------
-
     estimated_energy_loss_kwh:
       Math.max(
         0,
@@ -402,18 +476,10 @@ function normalizeMessage(message) {
         toNumber(waterLoss)
       ),
 
-    // ------------------------------------------------------
-    // ANOMALIES
-    // ------------------------------------------------------
-
     anomalies,
 
     primary_anomaly:
       primaryAnomaly,
-
-    // ------------------------------------------------------
-    // EFFICIENCY
-    // ------------------------------------------------------
 
     energy_score:
       toNumber(
@@ -429,10 +495,6 @@ function normalizeMessage(message) {
       detection.recommendation ||
       null,
 
-    // ------------------------------------------------------
-    // DEBUG / RAW DATA
-    // ------------------------------------------------------
-
     _raw:
       message,
 
@@ -440,7 +502,6 @@ function normalizeMessage(message) {
       Date.now()
   };
 }
-
 
 function buildAlert(facility) {
   if (
@@ -573,7 +634,7 @@ function mergeFacilityMetadata(
         city:
           existing.city ||
           telemetry.city ||
-          "â€”",
+          "—",
 
         iot_device:
           existing.iot_device ||
@@ -618,12 +679,6 @@ export function FlowSenseProvider({
   const [lastTick, setLastTick] =
     useState(null);
 
-  /*
-   * Load static metadata and existing alerts once.
-   *
-   * REST provides facility information.
-   * WebSocket provides realtime telemetry.
-   */
   useEffect(() => {
     let alive = true;
 
@@ -700,10 +755,6 @@ export function FlowSenseProvider({
     };
   }, []);
 
-  /*
-   * ONE realtime WebSocket for the
-   * entire application.
-   */
   useEffect(() => {
     const disconnect =
       connectAllFacilities({
@@ -769,10 +820,6 @@ export function FlowSenseProvider({
               )
           };
 
-          /*
-           * Keep the last 120 readings
-           * per facility.
-           */
           const previousHistory =
             historyRef.current[code] ||
             [];
@@ -858,9 +905,6 @@ export function FlowSenseProvider({
             }
           ].slice(-120);
 
-          /*
-           * Build/update realtime alert.
-           */
           const alert =
             buildAlert(facility);
 
@@ -875,10 +919,6 @@ export function FlowSenseProvider({
             };
           }
 
-          /*
-           * Merge live telemetry with
-           * static facility metadata.
-           */
           const merged =
             mergeFacilityMetadata(
               metadataRef.current,
@@ -918,9 +958,6 @@ export function FlowSenseProvider({
     [facilities]
   );
 
-  /*
-   * Portfolio totals.
-   */
   const totals = useMemo(() => {
     let energy = 0;
     let water = 0;
@@ -973,9 +1010,6 @@ export function FlowSenseProvider({
     };
   }, [facilityList]);
 
-  /*
-   * Facility health counts.
-   */
   const statusCounts = useMemo(
     () =>
       facilityList.reduce(
@@ -1007,9 +1041,6 @@ export function FlowSenseProvider({
     [facilityList]
   );
 
-  /*
-   * Average realtime efficiency.
-   */
   const averageEfficiency =
     useMemo(() => {
       if (!facilityList.length) {
@@ -1105,4 +1136,3 @@ export function useFlowSense() {
 
   return context;
 }
-

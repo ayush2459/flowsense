@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Building2,
@@ -1365,68 +1365,26 @@ export default function RealtimeOverview({
               sub="Ranked from current live efficiency"
             />
 
-            {facilities
-              .map((f) => {
-                const l = live[f.facility_code] || {};
-
-                const energyScore = Number(l.energy_score);
-                const waterScore = Number(l.water_score);
-                const actual = Number(l.energy_kwh);
-                const expected = Number(l.expected_energy_kwh);
-
-                let score;
-
-                if (
-                  Number.isFinite(energyScore) &&
-                  Number.isFinite(waterScore)
-                ) {
-                  score = (energyScore + waterScore) / 2;
-                } else if (Number.isFinite(energyScore)) {
-                  score = energyScore;
-                } else if (
-                  Number.isFinite(actual) &&
-                  Number.isFinite(expected) &&
-                  actual > 0
-                ) {
-                  score = Math.max(
-                    0,
-                    Math.min(
-                      100,
-                      (1 - Math.max(0, actual - expected) / actual) * 100
-                    )
-                  );
-                } else {
-                  score = 0;
+            {topPerformers.map((f, i) => (
+              <button
+                className="rank"
+                key={f.facility_code}
+                onClick={() =>
+                  nav(`/facilities/${f.facility_code}`)
                 }
+              >
+                <span>{i + 1}</span>
 
-                return {
-                  facility: f,
-                  score
-                };
-              })
-              .filter((x) => effective(x.facility) === "Healthy")
-              .sort((a, b) => b.score - a.score)
-              .slice(0, 5)
-              .map(({ facility: f, score }, i) => (
-                <button
-                  className="rank"
-                  key={f.facility_code}
-                  onClick={() =>
-                    nav(`/facilities/${f.facility_code}`)
-                  }
-                >
-                  <span>{i + 1}</span>
+                <div>
+                  <b>{f.facility_name}</b>
+                  <small>{f.city}</small>
+                </div>
 
-                  <div>
-                    <b>{f.facility_name}</b>
-                    <small>{f.city}</small>
-                  </div>
-
-                  <strong>
-                    {Math.round(score)}
-                  </strong>
-                </button>
-              ))}
+                <strong>
+                  {Number(f.performanceScore).toFixed(1)}
+                </strong>
+              </button>
+            ))}
           </Card>
 
           <Card>
