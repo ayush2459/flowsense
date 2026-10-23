@@ -308,6 +308,22 @@ export default function ResourceDiscrepancyAlerts() {
     ? "All Facilities · Portfolio Summary"
     : selectedFacility;
 
+  // Live discrepancy reports may arrive directly or nested inside an event payload.
+  const selectedReport = selectedFacility !== "all" ? selectedRows[0] : null;
+  const scoreReport =
+    selectedReport?.resource_discrepancy ??
+    selectedReport?.data?.resource_discrepancy ??
+    selectedReport?.detection?.resource_discrepancy ??
+    (selectedReport?.metrics ? selectedReport : null);
+
+  const discrepancyScore = scoreReport?.discrepancy_score;
+  const excessScore = scoreReport?.excess_consumption_score;
+  const crossResource = scoreReport?.cross_resource_indicator;
+  const scoreSeverity = scoreReport?.severity ?? "insufficient_data";
+
+  const displayScore = value =>
+    typeof value === "number" && Number.isFinite(value) ? `${value.toFixed(1)}/100` : "Not available";
+
   return (
     <section style={{ margin: "18px 0", padding: 18, border: "1px solid #dbe2ea", borderRadius: 16, background: "var(--card, #fff)" }}>
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
@@ -365,6 +381,74 @@ export default function ResourceDiscrepancyAlerts() {
               <MetricCard key={def.key} def={def} metric={metric} />
             ))}
           </div>
+
+          {selectedFacility !== "all" && selectedRows[0] && (
+            <div style={{
+              marginTop: 14,
+              padding: 14,
+              border: "1px solid #dbe2ea",
+              borderRadius: 12,
+              background: "var(--card, #fff)"
+            }}>
+              <div style={{ fontWeight: 800, marginBottom: 10 }}>
+                Consumption Discrepancy Scoring
+              </div>
+
+              {scoreReport ? (
+                <>
+                  <div style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+                    gap: 10
+                  }}>
+                    <div style={{ padding: 12, borderRadius: 9, background: "#f1f5f9" }}>
+                      <div style={{ fontSize: 12, color: "#475569" }}>Discrepancy score</div>
+                      <div style={{ fontSize: 22, fontWeight: 800, marginTop: 4 }}>
+                        {displayScore(discrepancyScore)}
+                      </div>
+                      <div style={{ fontSize: 11, marginTop: 4, color: "#64748b" }}>
+                        Magnitude of deviation
+                      </div>
+                    </div>
+
+                    <div style={{ padding: 12, borderRadius: 9, background: "#fff7ed" }}>
+                      <div style={{ fontSize: 12, color: "#9a3412" }}>Excess-consumption score</div>
+                      <div style={{ fontSize: 22, fontWeight: 800, marginTop: 4, color: "#9a3412" }}>
+                        {displayScore(excessScore)}
+                      </div>
+                      <div style={{ fontSize: 11, marginTop: 4, color: "#9a3412" }}>
+                        Above-baseline consumption only
+                      </div>
+                    </div>
+
+                    <div style={{ padding: 12, borderRadius: 9, background: "#f1f5f9" }}>
+                      <div style={{ fontSize: 12, color: "#475569" }}>Severity</div>
+                      <div style={{ fontSize: 17, fontWeight: 800, marginTop: 7, textTransform: "capitalize" }}>
+                        {String(scoreSeverity).replaceAll("_", " ")}
+                      </div>
+                    </div>
+
+                    <div style={{ padding: 12, borderRadius: 9, background: "#f1f5f9" }}>
+                      <div style={{ fontSize: 12, color: "#475569" }}>Cross-resource indicator</div>
+                      <div style={{ fontSize: 15, fontWeight: 800, marginTop: 7, overflowWrap: "anywhere" }}>
+                        {String(crossResource?.status ?? "insufficient_data").replaceAll("_", " ")}
+                      </div>
+                    </div>
+                  </div>
+
+                  {crossResource?.interpretation && (
+                    <p style={{ fontSize: 12, lineHeight: 1.5, color: "#64748b", margin: "10px 0 0" }}>
+                      {crossResource.interpretation}
+                    </p>
+                  )}
+                </>
+              ) : (
+                <p style={{ margin: 0, fontSize: 12, color: COLORS.grey[1] }}>
+                  Live metric readings are available, but this event does not contain the facility-level scoring fields. The backend may need to publish the updated discrepancy report.
+                </p>
+              )}
+            </div>
+          )}
           {selectedFacility === "all" && rows.length < 100 && (
             <p style={{ marginTop: 12, fontSize: 12, color: COLORS.grey[1] }}>
               Waiting for telemetry from {100 - rows.length} facilities. Portfolio totals currently include only facilities that have sent readings.
