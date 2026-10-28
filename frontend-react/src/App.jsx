@@ -60,6 +60,7 @@ import { useFlowSense } from "./context/FlowSenseContext";
 import { useAuth } from "./auth/AuthContext";
 import "./App.css";
 import AIInsightsPage from "./pages/AIInsightsPage";
+import TALQLiveData from "./pages/TALQLiveData";
 
 
 const navItems = [
@@ -72,6 +73,7 @@ const navItems = [
   ["/analytics", "Analytics", BarChart3],
   ["/ai-insights", "AI Insights", Sparkles],
   ["/devices", "Devices", Cpu],
+  ["/talq-live", "TALQ Live Data", Activity],
   ["/maintenance", "Maintenance", Wrench],
   ["/settings", "Settings", Settings]
 ];
@@ -5670,6 +5672,10 @@ function App() {
           <Route
             path="/devices"
             element={<Devices />}
+          />
+          <Route
+            path="/talq-live"
+            element={<TALQLiveData />}
           />
 	  <Route
   	    path="/maintenance"
