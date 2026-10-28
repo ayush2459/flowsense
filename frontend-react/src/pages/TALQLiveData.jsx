@@ -41,6 +41,10 @@ export default function TALQLiveData() {
 
   const load = useCallback(async (credentials = auth, background = false) => {
     if (!credentials) return;
+    if (!baseUrl) {
+      setError("Enter the gateway base URL.");
+      return;
+    }
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
