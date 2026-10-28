@@ -66,7 +66,10 @@ export default function TALQLiveData() {
       if (w) { setWater(Array.isArray(w.meter_readings) ? w.meter_readings : []); setSensors(Array.isArray(w.sensor_readings) ? w.sensor_readings : []); }
       if (a) setAlerts(Array.isArray(a.alerts) ? a.alerts : []);
       if (failed.length === results.length) throw failed[0].reason;
-      if (failed.length) setError(`Some sections failed to load: ${failed[0].reason?.message || "request failed"}`);
+      if (failed.length) {
+        const firstFailure = results.find(r => r.status === "rejected");
+        setError(`Some sections failed to load: ${firstFailure?.reason?.message || "request failed"}`);
+      }
       setLastUpdated(new Date());
     } catch (err) {
       if (err?.name !== "AbortError") setError(err?.message || "Could not connect to the gateway.");
