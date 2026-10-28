@@ -18,6 +18,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL")
+DB_AUTH_MODE = os.getenv("DB_AUTH_MODE", "").strip().lower()
+AWS_REGION = os.getenv("AWS_REGION", "ap-southeast-1")
+DB_HOST = os.getenv("DB_HOST")
+DB_PORT = int(os.getenv("DB_PORT", "5432"))
+DB_NAME = os.getenv("DB_NAME", "flowsense")
+DB_USER = os.getenv("DB_USER", "flowsense_gateway")
 
 API_URL = os.getenv(
     "FLOWSENSE_API_URL",
@@ -41,6 +47,33 @@ REQUEST_TIMEOUT = (CONNECT_TIMEOUT, 15)
 # ============================================================
 
 def get_conn():
+    if DB_AUTH_MODE == "iam":
+        if not DB_HOST or not DB_USER:
+            raise RuntimeError(
+                "DB_HOST and DB_USER are required for IAM authentication."
+            )
+
+        import boto3
+
+        token = boto3.client(
+            "rds",
+            region_name=AWS_REGION,
+        ).generate_db_auth_token(
+            DBHostname=DB_HOST,
+            Port=DB_PORT,
+            DBUsername=DB_USER,
+        )
+
+        return psycopg2.connect(
+            host=DB_HOST,
+            port=DB_PORT,
+            dbname=DB_NAME,
+            user=DB_USER,
+            password=token,
+            sslmode="require",
+            connect_timeout=CONNECT_TIMEOUT,
+        )
+
     if not DATABASE_URL:
         raise RuntimeError(
             "DATABASE_URL is missing. Check the project-root .env file."
