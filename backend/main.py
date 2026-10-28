@@ -1104,16 +1104,6 @@ def persist_live_telemetry(
     # Sustained recovery: resolve after 3 normal readings.
     # Recovery state is tracked independently per incident key.
     # --------------------------------------------------------
-    db.execute(text("""
-        CREATE TABLE IF NOT EXISTS anomaly_recovery_state (
-            facility_id TEXT NOT NULL,
-            anomaly_type TEXT NOT NULL,
-            resource_type TEXT NOT NULL DEFAULT '',
-            normal_streak INTEGER NOT NULL DEFAULT 0,
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            PRIMARY KEY (facility_id, anomaly_type, resource_type)
-        )
-    """))
 
     def _recovery_num(value):
         try:
